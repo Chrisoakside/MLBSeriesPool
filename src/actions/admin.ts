@@ -138,6 +138,18 @@ export async function createWeek(
   return { weekId: data };
 }
 
+/**
+ * Snap a spread value to the nearest valid half-point (1.5, 2.5, 3.5…).
+ * The `series` table has CHECK (spread != 0 AND (ABS(spread) * 10) % 10 = 5).
+ * Whole-number spreads (e.g. 2.0 from DK) are bumped up to the next .5 (2.5).
+ */
+function toValidHalfPoint(n: number): number {
+  const rounded = Math.round(n * 2) / 2; // nearest multiple of 0.5
+  const safe = Math.max(0.5, rounded);
+  // If still a whole number, nudge up to the next half-point
+  return safe % 1 === 0 ? safe + 0.5 : safe;
+}
+
 export async function upsertSeries(
   weekId: string,
   seriesEntries: {
@@ -154,7 +166,8 @@ export async function upsertSeries(
   const rows = seriesEntries.map((s) => ({
     week_id: weekId,
     mlb_series_id: s.mlb_series_id,
-    spread: s.spread,
+    // Enforce half-point constraint server-side (DK sometimes returns whole numbers)
+    spread: toValidHalfPoint(s.spread),
     favorite: s.favorite,
   }));
 

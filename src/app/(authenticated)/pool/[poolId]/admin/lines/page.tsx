@@ -58,6 +58,17 @@ interface LineEntry {
   hasDkSpread?: boolean; // spread came from DraftKings
 }
 
+/**
+ * Snap to a valid half-point spread (1.5, 2.5, 3.5…).
+ * DK sometimes returns whole numbers — this prevents the DB constraint
+ * "valid_half_point_spread" from being violated.
+ */
+function toValidHalfPoint(n: number): number {
+  const rounded = Math.round(n * 2) / 2; // nearest 0.5
+  const safe = Math.max(0.5, rounded);
+  return safe % 1 === 0 ? safe + 0.5 : safe; // whole → next .5
+}
+
 /** Next upcoming Friday (or today if today is Friday) */
 function getNextFriday(): string {
   const now = new Date();
@@ -137,7 +148,7 @@ export default function AdminLinesPage() {
             mlb_series_id: m.id,
             away: m.away_team_abbr,
             home: m.home_team_abbr,
-            spread: m.dk_spread ?? 1.5,
+            spread: toValidHalfPoint(m.dk_spread ?? 1.5),
             favorite: m.dk_favorite ?? ("home" as const),
             games: m.total_games_scheduled,
             startDate: m.series_start_date,
@@ -153,7 +164,7 @@ export default function AdminLinesPage() {
             mlb_series_id: m.id,
             away: m.away_team_abbr,
             home: m.home_team_abbr,
-            spread: m.dk_spread ?? 1.5,
+            spread: toValidHalfPoint(m.dk_spread ?? 1.5),
             favorite: m.dk_favorite ?? ("home" as const),
             games: m.total_games_scheduled,
             startDate: m.series_start_date,
@@ -170,7 +181,7 @@ export default function AdminLinesPage() {
           mlb_series_id: m.id,
           away: m.away_team_abbr,
           home: m.home_team_abbr,
-          spread: m.dk_spread ?? 1.5,
+          spread: toValidHalfPoint(m.dk_spread ?? 1.5),
           favorite: m.dk_favorite ?? ("home" as const),
           games: m.total_games_scheduled,
           startDate: m.series_start_date,
