@@ -1,19 +1,21 @@
 /**
  * MLB schedule + odds client.
  *
- * Primary source: ESPN scoreboard API (team abbreviations, game times, status)
- * Spreads: ESPN/DraftKings odds API per event
- * Fallback IDs: MLB Stats API gamePk via the ESPN gamePk field
+ * Schedule: MLB Stats API with hydrate=team,linescore,seriesSummary
+ *   - Works server-to-server reliably
+ *   - hydrate=team is required to get team abbreviations
  *
- * ESPN endpoints used:
- *   Scoreboard: https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=YYYYMMDD
- *   Odds:       https://sports.core.api.espn.com/v2/sports/baseball/leagues/mlb/events/{id}/competitions/{id}/odds
+ * Spreads: ESPN Core API (DraftKings odds) per game
+ *   - Best-effort: returns null if unavailable or blocked
+ *   - ESPN blocks some server IPs; failures are silently ignored
  */
 
+const MLB_API_BASE = "https://statsapi.mlb.com/api/v1";
+
 export interface MlbGameScore {
-  gamePk: number;           // ESPN event id (used as unique key)
-  gameDate: string;         // "2026-04-18"
-  gameTime: string;         // ISO datetime
+  gamePk: number;
+  gameDate: string;
+  gameTime: string;
   awayTeamId: number;
   homeTeamId: number;
   awayTeamAbbr: string;
@@ -26,135 +28,154 @@ export interface MlbGameScore {
   inning: number | null;
   inningState: string | null;
   isDoubleheader: boolean;
-  // Spread from DraftKings via ESPN odds API
-  spread: number | null;       // always positive (e.g. 1.5)
-  favorite: "home" | "away" | null; // which side gives up the spread
+  spread: number | null;
+  favorite: "home" | "away" | null;
 }
 
-interface EspnCompetitor {
-  homeAway: "home" | "away";
-  team: { id: string; abbreviation: string; displayName: string };
-  score?: string;
-  uid: string;
-}
-
-interface EspnEvent {
-  id: string;
-  shortName: string;
-  date: string;
-  competitions: {
-    id: string;
-    startDate: string;
-    status: {
-      type: {
-        name: string;   // "STATUS_SCHEDULED" | "STATUS_IN_PROGRESS" | "STATUS_FINAL"
-        completed: boolean;
-      };
-      period?: number;  // inning number
-      displayClock?: string;
-    };
-    competitors: EspnCompetitor[];
-    notes?: { type: string; headline: string }[];
-    format?: { regulation?: { periods: number } };
-  }[];
-}
-
-function mapEspnStatus(typeName: string): MlbGameScore["status"] {
-  if (typeName.includes("FINAL") || typeName.includes("COMPLETE")) return "final";
-  if (typeName.includes("IN_PROGRESS") || typeName.includes("HALFTIME")) return "in_progress";
-  if (typeName.includes("POSTPONED")) return "postponed";
-  if (typeName.includes("SUSPENDED")) return "suspended";
-  if (typeName.includes("CANCELLED") || typeName.includes("CANCELED")) return "cancelled";
+function mapStatus(abstractState: string, detailedState: string): MlbGameScore["status"] {
+  if (abstractState === "Final") return "final";
+  if (abstractState === "Live") return "in_progress";
+  if (detailedState.includes("Postponed")) return "postponed";
+  if (detailedState.includes("Suspended")) return "suspended";
+  if (detailedState.includes("Cancelled")) return "cancelled";
   return "scheduled";
 }
 
-async function fetchOddsForEvent(eventId: string): Promise<{ spread: number | null; favorite: "home" | "away" | null }> {
-  try {
-    const url = `https://sports.core.api.espn.com/v2/sports/baseball/leagues/mlb/events/${eventId}/competitions/${eventId}/odds`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(5_000) });
-    if (!resp.ok) return { spread: null, favorite: null };
-
-    const data = await resp.json();
-    // Prefer DraftKings, fall back to first provider
-    const items: Array<{
-      provider: { name: string };
-      spread?: number;
-      awayTeamOdds?: { favorite?: boolean };
-      homeTeamOdds?: { favorite?: boolean };
-    }> = data.items ?? [];
-
-    const dk = items.find((i) => i.provider?.name?.toLowerCase().includes("draftkings")) ?? items[0];
-    if (!dk || dk.spread == null) return { spread: null, favorite: null };
-
-    const spread = Math.abs(dk.spread); // always positive
-    const favorite = dk.awayTeamOdds?.favorite ? "away" : dk.homeTeamOdds?.favorite ? "home" : null;
-    return { spread, favorite };
-  } catch {
-    return { spread: null, favorite: null };
-  }
+interface EspnOddsEntry {
+  spread: number | null;
+  favorite: "home" | "away" | null;
 }
 
 /**
- * Fetch all MLB games for given dates from ESPN scoreboard, including
- * DraftKings spread data where available.
+ * Fetch DraftKings spreads for all games on a single date from ESPN.
+ * Returns a map of "AWAY @ HOME" shortName → odds.
+ * Best-effort: returns empty map on any failure.
+ */
+async function fetchEspnOddsForDate(
+  dateStr: string
+): Promise<Map<string, EspnOddsEntry>> {
+  const result = new Map<string, EspnOddsEntry>();
+  try {
+    const espnDate = dateStr.replace(/-/g, "");
+    const url = `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=${espnDate}&limit=30`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(6_000) });
+    if (!resp.ok) return result;
+
+    const data = await resp.json();
+    const events: Array<{ shortName: string; id: string }> = data.events ?? [];
+
+    // Fetch odds for all events in parallel (capped at 6s total)
+    await Promise.all(
+      events.map(async (event) => {
+        try {
+          const oddsUrl =
+            `https://sports.core.api.espn.com/v2/sports/baseball/leagues/mlb` +
+            `/events/${event.id}/competitions/${event.id}/odds`;
+          const oddsResp = await fetch(oddsUrl, { signal: AbortSignal.timeout(4_000) });
+          if (!oddsResp.ok) return;
+
+          const oddsData = await oddsResp.json();
+          const items: Array<{
+            provider: { name: string };
+            spread?: number;
+            awayTeamOdds?: { favorite?: boolean };
+            homeTeamOdds?: { favorite?: boolean };
+          }> = oddsData.items ?? [];
+
+          const dk =
+            items.find((i) => i.provider?.name?.toLowerCase().includes("draftkings")) ??
+            items[0];
+
+          if (!dk || dk.spread == null) return;
+
+          result.set(event.shortName, {
+            spread: Math.abs(dk.spread),
+            favorite: dk.awayTeamOdds?.favorite ? "away" : "home",
+          });
+        } catch {
+          // Ignore per-game failures
+        }
+      })
+    );
+  } catch {
+    // Ignore — ESPN may block Vercel server IPs; schedule still loads from MLB API
+  }
+  return result;
+}
+
+/**
+ * Fetch all MLB games for a date range from the MLB Stats API.
+ * Uses hydrate=team to get abbreviations (required — not in default response).
  */
 export async function fetchGamesForDates(dates: string[]): Promise<MlbGameScore[]> {
+  const startDate = dates[0];
+  const endDate = dates[dates.length - 1];
+
+  const url =
+    `${MLB_API_BASE}/schedule` +
+    `?sportId=1` +
+    `&startDate=${startDate}` +
+    `&endDate=${endDate}` +
+    `&hydrate=team,linescore` +
+    `&language=en`;
+
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "SeriesSpreadPool/1.0" },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`MLB API ${resp.status}: ${resp.statusText}`);
+  }
+
+  const data = await resp.json();
   const games: MlbGameScore[] = [];
 
-  for (const date of dates) {
-    const espnDate = date.replace(/-/g, ""); // "20260418"
-    const url = `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=${espnDate}&limit=30`;
+  // Pre-fetch ESPN odds for each date in parallel (best-effort)
+  const oddsByDate = new Map<string, Map<string, EspnOddsEntry>>();
+  await Promise.all(
+    (data.dates ?? []).map(async (date: { date: string }) => {
+      oddsByDate.set(date.date, await fetchEspnOddsForDate(date.date));
+    })
+  );
 
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "SeriesSpreadPool/1.0" },
-        signal: AbortSignal.timeout(10_000),
+  for (const date of data.dates ?? []) {
+    const dateOdds = oddsByDate.get(date.date) ?? new Map<string, EspnOddsEntry>();
+
+    for (const game of date.games ?? []) {
+      const t = game.teams;
+      const away = t.away.team;
+      const home = t.home.team;
+      const status = mapStatus(
+        game.status.abstractGameState,
+        game.status.detailedState
+      );
+      const isDoubleheader =
+        game.doubleHeader === "Y" || game.doubleHeader === "S";
+
+      // Look up odds from the pre-fetched ESPN map
+      const shortName = `${away.abbreviation} @ ${home.abbreviation}`;
+      const odds = dateOdds.get(shortName) ?? { spread: null, favorite: null };
+
+      games.push({
+        gamePk: game.gamePk,
+        gameDate: date.date,
+        gameTime: game.gameDate,
+        awayTeamId: away.id,
+        homeTeamId: home.id,
+        awayTeamAbbr: away.abbreviation,
+        homeTeamAbbr: home.abbreviation,
+        awayTeamName: away.teamName,
+        homeTeamName: home.teamName,
+        awayScore: t.away.score ?? 0,
+        homeScore: t.home.score ?? 0,
+        status,
+        inning: game.linescore?.currentInning ?? null,
+        inningState: game.linescore?.inningState ?? null,
+        isDoubleheader,
+        spread: odds.spread,
+        favorite: odds.favorite,
       });
-      if (!resp.ok) continue;
-
-      const data = await resp.json();
-      const events: EspnEvent[] = data.events ?? [];
-
-      for (const event of events) {
-        const comp = event.competitions?.[0];
-        if (!comp) continue;
-
-        const competitors = comp.competitors ?? [];
-        const away = competitors.find((c) => c.homeAway === "away");
-        const home = competitors.find((c) => c.homeAway === "home");
-        if (!away || !home) continue;
-
-        const status = mapEspnStatus(comp.status?.type?.name ?? "");
-        const isDoubleheader = (comp.notes ?? []).some(
-          (n) => n.headline?.toLowerCase().includes("game 2") || n.headline?.toLowerCase().includes("doubleheader")
-        );
-
-        // Get spread from odds API (non-blocking; defaults to null)
-        const odds = await fetchOddsForEvent(event.id);
-
-        games.push({
-          gamePk: parseInt(event.id, 10),
-          gameDate: date,
-          gameTime: comp.startDate,
-          awayTeamId: parseInt(away.team.id, 10),
-          homeTeamId: parseInt(home.team.id, 10),
-          awayTeamAbbr: away.team.abbreviation,
-          homeTeamAbbr: home.team.abbreviation,
-          awayTeamName: away.team.displayName,
-          homeTeamName: home.team.displayName,
-          awayScore: parseFloat(away.score ?? "0") || 0,
-          homeScore: parseFloat(home.score ?? "0") || 0,
-          status,
-          inning: comp.status?.period ?? null,
-          inningState: null,
-          isDoubleheader,
-          spread: odds.spread,
-          favorite: odds.favorite,
-        });
-      }
-    } catch {
-      // Skip dates that fail; don't abort the whole fetch
-      continue;
     }
   }
 
@@ -162,20 +183,16 @@ export async function fetchGamesForDates(dates: string[]): Promise<MlbGameScore[
 }
 
 /**
- * Get the Fri–Sun dates for the upcoming (or current) weekend.
+ * Get Fri–Sun dates for the upcoming (or current) weekend.
  */
 export function getWeekendDates(referenceDate = new Date()): string[] {
-  const day = referenceDate.getDay(); // 0=Sun … 6=Sat
-  // Days until Friday (if today is Fri/Sat/Sun we use this weekend)
-  let daysUntilFriday = (5 - day + 7) % 7;
-  if (day === 0) daysUntilFriday = 5; // Sunday → next Friday
-  if (day === 6) daysUntilFriday = 6; // Saturday → next Friday? No, this weekend
-  // Actually: if Fri/Sat/Sun, use current weekend; Mon–Thu use upcoming Fri
-  if (day === 6) daysUntilFriday = -1; // Sat → Fri was yesterday
-  if (day === 0) daysUntilFriday = -2; // Sun → Fri was 2 days ago
+  const day = referenceDate.getDay();
+  let daysToFriday = (5 - day + 7) % 7;
+  if (day === 0) daysToFriday = -2; // Sun → last Fri
+  if (day === 6) daysToFriday = -1; // Sat → last Fri
 
   const friday = new Date(referenceDate);
-  friday.setDate(friday.getDate() + daysUntilFriday);
+  friday.setDate(friday.getDate() + daysToFriday);
 
   return [0, 1, 2].map((i) => {
     const d = new Date(friday);
@@ -184,9 +201,6 @@ export function getWeekendDates(referenceDate = new Date()): string[] {
   });
 }
 
-/**
- * Build a stable series key from two ESPN team IDs and start date.
- */
 export function buildSeriesKey(
   awayTeamId: number,
   homeTeamId: number,
