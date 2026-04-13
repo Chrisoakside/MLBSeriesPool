@@ -1,17 +1,25 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { fetchGamesForDates } from "@/lib/mlb-api";
 
 /**
  * Fetch the MLB schedule for a given weekend (Fri–Sun) and seed the
  * mlb_series + mlb_games tables. Games are grouped into series by
  * matching team pairs. Safe to call multiple times (upserts on unique keys).
+ *
+ * Uses the service-role client for DB writes because mlb_series and
+ * mlb_games have RLS policies that deny writes from authenticated users.
  */
 export async function seedMlbSchedule(fridayDate: string) {
+  // Auth check with regular client
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
+
+  // Service-role client for MLB table writes (bypasses RLS)
+  const serviceSupabase = createServiceClient();
 
   // Build Fri–Sun date strings
   const friday = new Date(fridayDate + "T12:00:00Z");
@@ -57,8 +65,8 @@ export async function seedMlbSchedule(fridayDate: string) {
     const seriesSpread = gameWithOdds.spread ?? 1.5;
     const seriesFavorite = gameWithOdds.favorite ?? "home";
 
-    // Upsert mlb_series
-    const { data: seriesRow, error: seriesErr } = await supabase
+    // Upsert mlb_series (service role bypasses RLS)
+    const { data: seriesRow, error: seriesErr } = await serviceSupabase
       .from("mlb_series")
       .upsert(
         {
@@ -80,12 +88,15 @@ export async function seedMlbSchedule(fridayDate: string) {
       .select("id")
       .single();
 
-    if (seriesErr || !seriesRow) continue;
+    if (seriesErr || !seriesRow) {
+      console.error("mlb_series upsert error:", seriesErr?.message);
+      continue;
+    }
     seriesCount++;
 
-    // Upsert each game
+    // Upsert each game (service role bypasses RLS)
     for (const game of sorted) {
-      const { error: gameErr } = await supabase
+      const { error: gameErr } = await serviceSupabase
         .from("mlb_games")
         .upsert(
           {
@@ -102,7 +113,8 @@ export async function seedMlbSchedule(fridayDate: string) {
           },
           { onConflict: "mlb_game_pk", ignoreDuplicates: false }
         );
-      if (!gameErr) gameCount++;
+      if (gameErr) console.error("mlb_games upsert error:", gameErr.message);
+      else gameCount++;
     }
   }
 
