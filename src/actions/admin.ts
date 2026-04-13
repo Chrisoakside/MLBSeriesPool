@@ -1,6 +1,107 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { fetchGamesForDates } from "@/lib/mlb-api";
+
+/**
+ * Fetch the MLB schedule for a given weekend (Fri–Sun) and seed the
+ * mlb_series + mlb_games tables. Games are grouped into series by
+ * matching team pairs. Safe to call multiple times (upserts on unique keys).
+ */
+export async function seedMlbSchedule(fridayDate: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  // Build Fri–Sun date strings
+  const friday = new Date(fridayDate + "T12:00:00Z");
+  const dates = [0, 1, 2].map((offset) => {
+    const d = new Date(friday);
+    d.setUTCDate(d.getUTCDate() + offset);
+    return d.toISOString().split("T")[0];
+  });
+
+  let games;
+  try {
+    games = await fetchGamesForDates(dates);
+  } catch (err) {
+    return { error: `MLB API error: ${String(err)}` };
+  }
+
+  if (!games.length) {
+    return { seriesCount: 0, gameCount: 0, message: "No games found for those dates" };
+  }
+
+  // Group games into series: same home+away team pair over the weekend
+  // Key = sorted(awayTeamId, homeTeamId) so we don't double-count flipped venues
+  const seriesMap = new Map<string, typeof games>();
+  for (const game of games) {
+    // Series key: always away@home based on this game's venue
+    const key = `${game.awayTeamId}-${game.homeTeamId}`;
+    const existing = seriesMap.get(key) ?? [];
+    existing.push(game);
+    seriesMap.set(key, existing);
+  }
+
+  let seriesCount = 0;
+  let gameCount = 0;
+  const seasonYear = parseInt(dates[0].split("-")[0]);
+
+  for (const [, seriesGames] of seriesMap) {
+    const sorted = [...seriesGames].sort((a, b) => a.gameDate.localeCompare(b.gameDate));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const seriesKey = `${first.awayTeamId}-${first.homeTeamId}-${first.gameDate}`;
+
+    // Upsert mlb_series
+    const { data: seriesRow, error: seriesErr } = await supabase
+      .from("mlb_series")
+      .upsert(
+        {
+          season_year: seasonYear,
+          series_start_date: first.gameDate,
+          series_end_date: last.gameDate,
+          away_team_abbr: first.awayTeamAbbr,
+          home_team_abbr: first.homeTeamAbbr,
+          away_team_name: first.awayTeamAbbr, // abbreviation used as name fallback
+          home_team_name: first.homeTeamAbbr,
+          total_games_scheduled: sorted.length,
+          mlb_api_series_key: seriesKey,
+          status: "pending",
+        },
+        { onConflict: "mlb_api_series_key", ignoreDuplicates: false }
+      )
+      .select("id")
+      .single();
+
+    if (seriesErr || !seriesRow) continue;
+    seriesCount++;
+
+    // Upsert each game
+    for (const game of sorted) {
+      const { error: gameErr } = await supabase
+        .from("mlb_games")
+        .upsert(
+          {
+            mlb_series_id: seriesRow.id,
+            mlb_game_pk: game.gamePk,
+            game_date: game.gameDate,
+            game_time: game.gameTime,
+            away_score: game.awayScore,
+            home_score: game.homeScore,
+            status: game.status,
+            is_doubleheader: game.isDoubleheader,
+            inning: game.inning,
+            inning_state: game.inningState,
+          },
+          { onConflict: "mlb_game_pk", ignoreDuplicates: false }
+        );
+      if (!gameErr) gameCount++;
+    }
+  }
+
+  return { seriesCount, gameCount };
+}
 
 export async function createWeek(
   poolId: string,
@@ -65,12 +166,12 @@ export async function getAdminLinesData(poolId: string) {
     .limit(1)
     .single();
 
-  // Available MLB series (always fetch, used for new week creation too)
+  // Available MLB series — show upcoming/current weekend first
   const { data: mlbSeries } = await supabase
     .from("mlb_series")
     .select("*")
-    .order("series_start_date", { ascending: false })
-    .limit(30);
+    .order("series_start_date", { ascending: true })
+    .limit(60);
 
   // If no week yet, return enough to show the "create week" form
   if (!week) {

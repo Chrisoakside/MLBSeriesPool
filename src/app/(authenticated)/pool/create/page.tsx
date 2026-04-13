@@ -4,15 +4,18 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Copy, Share2, Check } from "lucide-react";
+import { Copy, Share2, Check, ChevronRight } from "lucide-react";
 import { QRCodeDisplay } from "@/components/ui/qr-code";
 import { createPool } from "@/actions/pools";
 import Link from "next/link";
+
+const WEEK_OPTIONS = [4, 8, 10, 12, 16, 20];
 
 export default function CreatePoolPage() {
   const [step, setStep] = useState<"form" | "success">("form");
   const [name, setName] = useState("");
   const [entryFee, setEntryFee] = useState("100");
+  const [totalWeeks, setTotalWeeks] = useState(10);
   const [isPrivate, setIsPrivate] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [poolId, setPoolId] = useState("");
@@ -29,6 +32,7 @@ export default function CreatePoolPage() {
     formData.set("name", name.trim());
     formData.set("entryFee", entryFee);
     formData.set("isPrivate", isPrivate ? "true" : "false");
+    formData.set("totalWeeks", String(totalWeeks));
 
     const result = await createPool(formData);
 
@@ -61,6 +65,9 @@ export default function CreatePoolPage() {
           <p className="text-sm text-slate-400 mt-2">
             Share the code below to invite members to{" "}
             <span className="text-white">{name}</span>.
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            {totalWeeks > 0 ? `${totalWeeks}-week season` : "Open-ended season"} · ${entryFee} entry
           </p>
         </div>
 
@@ -108,9 +115,19 @@ export default function CreatePoolPage() {
           </CardContent>
         </Card>
 
-        <Link href={`/pool/${poolId}/dashboard`}>
-          <Button className="w-full">Go to Pool Dashboard</Button>
-        </Link>
+        <div className="space-y-3">
+          <Link href={`/pool/${poolId}/admin/lines`}>
+            <Button className="w-full">
+              Set This Week&apos;s Lines
+              <ChevronRight className="w-4 h-4 ml-1.5" />
+            </Button>
+          </Link>
+          <Link href={`/pool/${poolId}/dashboard`}>
+            <Button variant="secondary" className="w-full">
+              Go to Pool Dashboard
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -138,6 +155,7 @@ export default function CreatePoolPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+
           <Input
             label="Entry Fee ($)"
             type="number"
@@ -145,6 +163,45 @@ export default function CreatePoolPage() {
             value={entryFee}
             onChange={(e) => setEntryFee(e.target.value)}
           />
+
+          {/* Season Length */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Season Length
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {WEEK_OPTIONS.map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setTotalWeeks(w)}
+                  className={`py-2.5 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
+                    totalWeeks === w
+                      ? "bg-emerald-500/15 border-emerald-500 text-emerald-400"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-300"
+                  }`}
+                >
+                  {w} weeks
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setTotalWeeks(0)}
+              className={`mt-2 w-full py-2.5 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
+                totalWeeks === 0
+                  ? "bg-emerald-500/15 border-emerald-500 text-emerald-400"
+                  : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-300"
+              }`}
+            >
+              Open-ended (no fixed end)
+            </button>
+            <p className="text-xs text-slate-500 mt-1.5">
+              {totalWeeks > 0
+                ? `Pool runs for ${totalWeeks} weekends. Estimated prize pool: $${(parseFloat(entryFee) || 0) * totalWeeks > 0 ? ((parseFloat(entryFee) || 0) * totalWeeks).toLocaleString() : "—"} per member total.`
+                : "You control when the season ends — create a new week each weekend as you go."}
+            </p>
+          </div>
+
+          {/* Private toggle */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-white">Private Pool</p>
@@ -154,7 +211,7 @@ export default function CreatePoolPage() {
             </div>
             <button
               onClick={() => setIsPrivate(!isPrivate)}
-              className={`w-11 h-6 rounded-full transition-colors relative ${
+              className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
                 isPrivate ? "bg-emerald-500" : "bg-slate-700"
               }`}
             >

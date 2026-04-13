@@ -11,11 +11,13 @@ export async function createPool(formData: FormData) {
   const name = formData.get("name") as string;
   const entryFee = parseFloat(formData.get("entryFee") as string) || 25;
   const isPrivate = formData.get("isPrivate") === "true";
+  const totalWeeks = parseInt(formData.get("totalWeeks") as string) || 0;
 
   const { data, error } = await supabase.rpc("create_pool", {
     p_name: name,
     p_entry_fee: entryFee,
     p_is_private: isPrivate,
+    p_total_weeks: totalWeeks,
   });
 
   if (error) return { error: error.message };
