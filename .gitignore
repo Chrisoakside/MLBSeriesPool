@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# supabase temp files (project-specific, not for repo)
+supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
