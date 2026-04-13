@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { login, signup, signInWithGoogle } from "@/actions/auth";
+import { login, signup } from "@/actions/auth";
+import { createClient } from "@/lib/supabase/client";
 
 type AuthTab = "login" | "signup";
 
@@ -31,11 +32,22 @@ export function AuthSection() {
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
-    const result = await signInWithGoogle();
-    if (result?.error) {
-      setError(result.error);
+    // Use the browser client directly so the PKCE code_verifier cookie is
+    // written by the browser (document.cookie) rather than via a server action
+    // where redirect() may flush before cookies are sent.
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/callback`,
+      },
+    });
+    if (error) {
+      setError(error.message);
       setLoading(false);
     }
+    // On success the library navigates to Google automatically — no further
+    // action needed here.
   };
 
   return (

@@ -33,8 +33,12 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return redirectTo;
     }
+    // Surface the real error message so it's visible in the URL for debugging
+    return NextResponse.redirect(
+      `${origin}/?error=${encodeURIComponent(error.message)}`
+    );
   }
 
-  // Code missing or exchange failed — return to landing with error flag
-  return NextResponse.redirect(`${origin}/?error=auth`);
+  // No code in the URL at all
+  return NextResponse.redirect(`${origin}/?error=missing_code`);
 }
