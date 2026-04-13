@@ -33,10 +33,9 @@ export async function seedMlbSchedule(fridayDate: string) {
   }
 
   // Group games into series: same home+away team pair over the weekend
-  // Key = sorted(awayTeamId, homeTeamId) so we don't double-count flipped venues
+  // Key = awayTeamId-homeTeamId (venue-specific, not sorted, so HOU@NYY ≠ NYY@HOU)
   const seriesMap = new Map<string, typeof games>();
   for (const game of games) {
-    // Series key: always away@home based on this game's venue
     const key = `${game.awayTeamId}-${game.homeTeamId}`;
     const existing = seriesMap.get(key) ?? [];
     existing.push(game);
@@ -53,6 +52,11 @@ export async function seedMlbSchedule(fridayDate: string) {
     const last = sorted[sorted.length - 1];
     const seriesKey = `${first.awayTeamId}-${first.homeTeamId}-${first.gameDate}`;
 
+    // Use spread from the first game that has odds (usually the opener)
+    const gameWithOdds = sorted.find((g) => g.spread !== null) ?? sorted[0];
+    const seriesSpread = gameWithOdds.spread ?? 1.5;
+    const seriesFavorite = gameWithOdds.favorite ?? "home";
+
     // Upsert mlb_series
     const { data: seriesRow, error: seriesErr } = await supabase
       .from("mlb_series")
@@ -63,11 +67,13 @@ export async function seedMlbSchedule(fridayDate: string) {
           series_end_date: last.gameDate,
           away_team_abbr: first.awayTeamAbbr,
           home_team_abbr: first.homeTeamAbbr,
-          away_team_name: first.awayTeamAbbr, // abbreviation used as name fallback
-          home_team_name: first.homeTeamAbbr,
+          away_team_name: first.awayTeamName,
+          home_team_name: first.homeTeamName,
           total_games_scheduled: sorted.length,
           mlb_api_series_key: seriesKey,
           status: "pending",
+          dk_spread: seriesSpread,
+          dk_favorite: seriesFavorite,
         },
         { onConflict: "mlb_api_series_key", ignoreDuplicates: false }
       )
@@ -100,7 +106,7 @@ export async function seedMlbSchedule(fridayDate: string) {
     }
   }
 
-  return { seriesCount, gameCount };
+  return { seriesCount, gameCount, spreadsAvailable: games.filter(g => g.spread !== null).length };
 }
 
 export async function createWeek(

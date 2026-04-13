@@ -33,6 +33,8 @@ interface MlbSeries {
   total_games_scheduled: number;
   series_start_date: string;
   series_end_date: string;
+  dk_spread: number | null;
+  dk_favorite: "home" | "away" | null;
 }
 
 interface ExistingSeries {
@@ -53,6 +55,7 @@ interface LineEntry {
   startDate: string;
   isSet: boolean;
   selected: boolean; // whether admin has toggled it into the week
+  hasDkSpread?: boolean; // spread came from DraftKings
 }
 
 /** Next upcoming Friday (or today if today is Friday) */
@@ -134,27 +137,29 @@ export default function AdminLinesPage() {
             mlb_series_id: m.id,
             away: m.away_team_abbr,
             home: m.home_team_abbr,
-            spread: 1.5,
-            favorite: "home" as const,
+            spread: m.dk_spread ?? 1.5,
+            favorite: m.dk_favorite ?? ("home" as const),
             games: m.total_games_scheduled,
             startDate: m.series_start_date,
             isSet: false,
             selected: false,
+            hasDkSpread: m.dk_spread !== null,
           }));
         setLines([...existingLines, ...extras]);
       } else {
-        // No lines saved yet — show all available mlb series, pre-selected
+        // No lines saved yet — show all available mlb series with DK spreads
         setLines(
           mlb.map((m) => ({
             mlb_series_id: m.id,
             away: m.away_team_abbr,
             home: m.home_team_abbr,
-            spread: 1.5,
-            favorite: "home" as const,
+            spread: m.dk_spread ?? 1.5,
+            favorite: m.dk_favorite ?? ("home" as const),
             games: m.total_games_scheduled,
             startDate: m.series_start_date,
             isSet: false,
             selected: false,
+            hasDkSpread: m.dk_spread !== null,
           }))
         );
       }
@@ -165,12 +170,13 @@ export default function AdminLinesPage() {
           mlb_series_id: m.id,
           away: m.away_team_abbr,
           home: m.home_team_abbr,
-          spread: 1.5,
-          favorite: "home" as const,
+          spread: m.dk_spread ?? 1.5,
+          favorite: m.dk_favorite ?? ("home" as const),
           games: m.total_games_scheduled,
           startDate: m.series_start_date,
           isSet: false,
           selected: false,
+          hasDkSpread: m.dk_spread !== null,
         }))
       );
     }
@@ -194,7 +200,7 @@ export default function AdminLinesPage() {
       setFetchResult(
         result.seriesCount === 0
           ? "No games found — the MLB schedule may not be posted yet for that weekend."
-          : `Loaded ${result.seriesCount} series (${result.gameCount} games) from MLB Stats API.`
+          : `Loaded ${result.seriesCount} series (${result.gameCount} games) from ESPN.${"spreadsAvailable" in result && result.spreadsAvailable ? ` DraftKings spreads pre-filled for ${result.spreadsAvailable} games.` : " Spreads not yet posted — set them manually."}`
       );
       await loadData();
     }
@@ -365,7 +371,7 @@ export default function AdminLinesPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-slate-400">
-            Pull the weekend&apos;s games directly from the MLB Stats API. Select the
+            Pull the weekend&apos;s games directly from ESPN with DraftKings spread data. Select the
             Friday start date and click Fetch — all matchups will appear below
             for you to set spreads on.
           </p>
@@ -527,11 +533,16 @@ export default function AdminLinesPage() {
                               </button>
                             )}
                           </div>
-                          <p className="text-xs text-slate-500 mt-0.5">
+                          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
                             {line.games}-game series ·{" "}
                             <span className="text-slate-400 font-mono">
                               {line.favorite === "home" ? line.home : line.away} -{line.spread.toFixed(1)}
                             </span>
+                            {line.hasDkSpread && (
+                              <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded px-1 py-0.5">
+                                DK
+                              </span>
+                            )}
                           </p>
                         </div>
 
