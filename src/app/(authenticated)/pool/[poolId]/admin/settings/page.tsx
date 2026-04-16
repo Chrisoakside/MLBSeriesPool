@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Copy, Shield, UserMinus, Check } from "lucide-react";
+import { Copy, Shield, UserMinus, Check, AlertTriangle } from "lucide-react";
 import { QRCodeDisplay } from "@/components/ui/qr-code";
 import {
   getPoolSettings,
@@ -34,6 +34,7 @@ export default function AdminSettingsPage() {
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<{ userId: string; name: string } | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -71,11 +72,13 @@ export default function AdminSettingsPage() {
     setSaving(false);
   };
 
-  const handleRemoveMember = async (userId: string) => {
-    setRemovingId(userId);
-    const result = await removeMember(poolId, userId);
+  const handleRemoveMember = async () => {
+    if (!confirmRemove) return;
+    setRemovingId(confirmRemove.userId);
+    setConfirmRemove(null);
+    const result = await removeMember(poolId, confirmRemove.userId);
     if (!result.error) {
-      setMembers((prev) => prev.filter((m) => m.user_id !== userId));
+      setMembers((prev) => prev.filter((m) => m.user_id !== confirmRemove.userId));
     }
     setRemovingId(null);
   };
@@ -222,9 +225,11 @@ export default function AdminSettingsPage() {
                         size="sm"
                         className="text-red-400 hover:text-red-300 px-2"
                         disabled={removingId === member.user_id}
-                        onClick={() => handleRemoveMember(member.user_id)}
+                        onClick={() => setConfirmRemove({ userId: member.user_id, name })}
                       >
-                        <UserMinus className="w-3.5 h-3.5" />
+                        {removingId === member.user_id
+                          ? <span className="text-xs">Removing…</span>
+                          : <UserMinus className="w-3.5 h-3.5" />}
                       </Button>
                     )}
                   </div>
@@ -234,6 +239,53 @@ export default function AdminSettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Remove Member Confirmation Modal ─────────────────────── */}
+      {confirmRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setConfirmRemove(null)}
+          />
+          <div className="relative bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full space-y-5 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-white">Remove Member</h2>
+                <p className="text-xs text-slate-400 mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300">
+              Are you sure you want to remove{" "}
+              <span className="font-semibold text-white">{confirmRemove.name}</span>{" "}
+              from this pool? They will lose access to all pool data and their picks history.
+            </p>
+
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="flex-1"
+                onClick={() => setConfirmRemove(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                className="flex-1"
+                onClick={handleRemoveMember}
+              >
+                <UserMinus className="w-3.5 h-3.5 mr-1.5" />
+                Yes, Remove
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

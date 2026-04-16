@@ -8,6 +8,34 @@ import { getScoresData } from "@/actions/tickets";
 import { useParams } from "next/navigation";
 import { useLiveScores } from "@/hooks/use-live-scores";
 
+const ESPN_SLUG_OVERRIDES: Record<string, string> = { AZ: "ari", CWS: "chw" };
+
+function TeamLogo({ abbr, size = 32 }: { abbr: string; size?: number }) {
+  const [errored, setErrored] = useState(false);
+  const slug = ESPN_SLUG_OVERRIDES[abbr] ?? abbr.toLowerCase();
+  if (errored) {
+    return (
+      <div
+        style={{ width: size, height: size }}
+        className="rounded-full bg-slate-700 flex items-center justify-center text-[9px] font-bold text-slate-300 flex-shrink-0"
+      >
+        {abbr.slice(0, 3)}
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://a.espncdn.com/i/teamlogos/mlb/500/${slug}.png`}
+      alt={abbr}
+      width={size}
+      height={size}
+      onError={() => setErrored(true)}
+      className="object-contain flex-shrink-0"
+    />
+  );
+}
+
 interface MlbGame {
   id: string;
   game_date: string;
@@ -140,9 +168,13 @@ export default function ScoresPage() {
               )}
               <CardContent>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-white">
-                    {mlb.away_team_abbr} @ {mlb.home_team_abbr}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <TeamLogo abbr={mlb.away_team_abbr} size={28} />
+                    <span className="text-sm font-bold text-slate-300">{mlb.away_team_abbr}</span>
+                    <span className="text-xs text-slate-600">@</span>
+                    <TeamLogo abbr={mlb.home_team_abbr} size={28} />
+                    <span className="text-sm font-bold text-slate-300">{mlb.home_team_abbr}</span>
+                  </div>
                   <Badge variant="default" className="font-mono text-xs">
                     {spreadLabel}
                   </Badge>

@@ -21,6 +21,7 @@ function teamLogoUrl(abbr: string): string {
 
 interface Game {
   id: string;
+  mlb_game_pk: number;
   game_date: string;
   game_time: string;
   away_probable_pitcher: string | null;
@@ -60,6 +61,7 @@ export default function PicksPage() {
   const poolId = params.poolId as string;
 
   const [series, setSeries] = useState<Series[]>([]);
+  const [pitcherMap, setPitcherMap] = useState<Record<number, { away: string | null; home: string | null }>>({});
   const [week, setWeek] = useState<{
     id: string;
     week_number: number;
@@ -86,6 +88,7 @@ export default function PicksPage() {
       setWeek(data.week);
       setSeries(data.series as Series[]);
       setIsLocked(data.isLocked);
+      if (data.pitcherMap) setPitcherMap(data.pitcherMap);
 
       if (data.existingPicks.length > 0) {
         const picks = new Map<string, "home" | "away">();
@@ -229,9 +232,16 @@ export default function PicksPage() {
           const pickedSide = selected.get(s.id);
           const isSelected = !!pickedSide;
           const mlb = s.mlb_series;
-          const games = (mlb.mlb_games ?? []).sort((a, b) =>
-            a.game_date.localeCompare(b.game_date)
-          );
+          // Merge DB pitcher data with live API data (API wins for null DB values)
+          const games = (mlb.mlb_games ?? [])
+            .sort((a, b) => a.game_date.localeCompare(b.game_date))
+            .map((g) => ({
+              ...g,
+              away_probable_pitcher:
+                g.away_probable_pitcher ?? pitcherMap[g.mlb_game_pk]?.away ?? null,
+              home_probable_pitcher:
+                g.home_probable_pitcher ?? pitcherMap[g.mlb_game_pk]?.home ?? null,
+            }));
 
           return (
             <Card

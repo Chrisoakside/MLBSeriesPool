@@ -19,10 +19,10 @@ export async function getPicksData(poolId: string) {
 
   if (!week) return null;
 
-  // Get series for this week with MLB data including games + probable pitchers
+  // Get series with games (including mlb_game_pk so we can look up pitchers)
   const { data: seriesList } = await supabase
     .from("series")
-    .select("*, mlb_series(*, mlb_games(id, game_date, game_time, away_probable_pitcher, home_probable_pitcher))")
+    .select("*, mlb_series(*, mlb_games(id, mlb_game_pk, game_date, game_time, away_probable_pitcher, home_probable_pitcher))")
     .eq("week_id", week.id);
 
   // Get user's existing ticket
@@ -33,11 +33,48 @@ export async function getPicksData(poolId: string) {
     .eq("user_id", user.id)
     .single();
 
+  // Fetch live probable pitcher data from MLB Stats API.
+  // This fills in gaps when: (a) games were seeded before the pitcher columns
+  // were added, or (b) pitchers weren't announced yet at seeding time.
+  const allGames = (seriesList ?? []).flatMap(
+    (s: { mlb_series: { mlb_games: { mlb_game_pk: number; game_date: string }[] } }) =>
+      s.mlb_series?.mlb_games ?? []
+  );
+  const gameDates = [...new Set(allGames.map((g) => g.game_date))].sort();
+  const pitcherMap: Record<number, { away: string | null; home: string | null }> = {};
+
+  if (gameDates.length > 0) {
+    try {
+      const url =
+        `https://statsapi.mlb.com/api/v1/schedule` +
+        `?sportId=1&startDate=${gameDates[0]}&endDate=${gameDates[gameDates.length - 1]}` +
+        `&hydrate=probablePitcher(person)&language=en`;
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "SeriesSpreadPool/1.0" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        for (const date of data.dates ?? []) {
+          for (const game of date.games ?? []) {
+            pitcherMap[game.gamePk] = {
+              away: game.teams?.away?.probablePitcher?.fullName ?? null,
+              home: game.teams?.home?.probablePitcher?.fullName ?? null,
+            };
+          }
+        }
+      }
+    } catch {
+      // Pitcher data is best-effort — don't fail page load if MLB API is slow
+    }
+  }
+
   return {
     week,
     series: seriesList ?? [],
     existingPicks: existingTicket?.ticket_picks ?? [],
     isLocked: new Date(week.lock_time) <= new Date(),
+    pitcherMap,
   };
 }
 

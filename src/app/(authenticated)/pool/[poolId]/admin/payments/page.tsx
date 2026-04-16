@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Check } from "lucide-react";
+import { Check, AlertCircle } from "lucide-react";
 import {
   getPaymentsData,
   togglePayment as togglePaymentAction,
@@ -37,6 +37,7 @@ export default function AdminPaymentsPage() {
   const [entryFee, setEntryFee] = useState(0);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -63,6 +64,7 @@ export default function AdminPaymentsPage() {
   const handleToggle = async (userId: string, weekId: string) => {
     const key = `${userId}-${weekId}`;
     setToggling(key);
+    setToggleError(null);
 
     const currentlyPaid = getPaymentStatus(userId, weekId);
     const result = await togglePaymentAction(
@@ -73,7 +75,9 @@ export default function AdminPaymentsPage() {
       entryFee
     );
 
-    if (!result.error) {
+    if (result.error) {
+      setToggleError(result.error);
+    } else {
       // Update local state
       setPayments((prev) => {
         const existing = prev.find(
@@ -133,10 +137,17 @@ export default function AdminPaymentsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Payments</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Track weekly entry fee payments
+            Track weekly entry fee payments — checking a box marks that member paid and adds their fee to the jackpot.
           </p>
         </div>
       </div>
+
+      {toggleError && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-center gap-3">
+          <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <p className="text-sm text-red-400">{toggleError}</p>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

@@ -284,8 +284,22 @@ export async function togglePayment(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated" };
 
+  // Use service role to bypass RLS (payments table denies writes from authenticated role)
+  const service = createServiceClient();
+
+  // Check current payment state so we only add a ledger entry when state changes
+  const { data: existing } = await service
+    .from("payments")
+    .select("is_paid")
+    .eq("pool_id", poolId)
+    .eq("week_id", weekId)
+    .eq("user_id", userId)
+    .single();
+
+  const wasPaid = existing?.is_paid ?? false;
+
   // Upsert payment record
-  const { error } = await supabase
+  const { error } = await service
     .from("payments")
     .upsert(
       {
@@ -301,6 +315,23 @@ export async function togglePayment(
     );
 
   if (error) return { error: error.message };
+
+  // Only update jackpot ledger when the paid state actually changes
+  if (wasPaid !== isPaid) {
+    const ledgerAmount = isPaid ? amount : -amount;
+    const { error: ledgerErr } = await service.from("jackpot_ledger").insert({
+      pool_id: poolId,
+      week_id: weekId,
+      entry_type: isPaid ? "entry_fee" : "adjustment",
+      amount: ledgerAmount,
+      description: isPaid
+        ? `Entry fee collected`
+        : `Entry fee reversed`,
+      created_by: user.id,
+    });
+    if (ledgerErr) return { error: ledgerErr.message };
+  }
+
   return { success: true };
 }
 
