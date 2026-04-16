@@ -38,6 +38,7 @@ interface Series {
     away_team_name: string;
     home_team_name: string;
     total_games_scheduled: number;
+    series_start_date: string;
     mlb_games: Game[];
   };
 }
@@ -61,7 +62,7 @@ export default function PicksPage() {
   const poolId = params.poolId as string;
 
   const [series, setSeries] = useState<Series[]>([]);
-  const [pitcherMap, setPitcherMap] = useState<Record<number, { away: string | null; home: string | null }>>({});
+  const [pitcherMap, setPitcherMap] = useState<Record<string, { away: string | null; home: string | null }>>({});
   const [week, setWeek] = useState<{
     id: string;
     week_number: number;
@@ -232,16 +233,25 @@ export default function PicksPage() {
           const pickedSide = selected.get(s.id);
           const isSelected = !!pickedSide;
           const mlb = s.mlb_series;
-          // Merge DB pitcher data with live API data (API wins for null DB values)
-          const games = (mlb.mlb_games ?? [])
-            .sort((a, b) => a.game_date.localeCompare(b.game_date))
-            .map((g) => ({
-              ...g,
-              away_probable_pitcher:
-                g.away_probable_pitcher ?? pitcherMap[g.mlb_game_pk]?.away ?? null,
-              home_probable_pitcher:
-                g.home_probable_pitcher ?? pitcherMap[g.mlb_game_pk]?.home ?? null,
-            }));
+
+          // Build 3 game slots (Fri/Sat/Sun) from series_start_date.
+          // This shows all 3 days even when only Friday is stored in mlb_games.
+          const dbGamesByDate = Object.fromEntries(
+            (mlb.mlb_games ?? []).map((g) => [g.game_date, g])
+          );
+          const gameSlots = [0, 1, 2].map((offset) => {
+            const d = new Date(mlb.series_start_date + "T12:00:00Z");
+            d.setUTCDate(d.getUTCDate() + offset);
+            const dateStr = d.toISOString().split("T")[0];
+            const dbGame = dbGamesByDate[dateStr];
+            const apiKey = `${dateStr}|${mlb.away_team_abbr}|${mlb.home_team_abbr}`;
+            const apiPitchers = pitcherMap[apiKey];
+            return {
+              date: dateStr,
+              awayPitcher: dbGame?.away_probable_pitcher ?? apiPitchers?.away ?? null,
+              homePitcher: dbGame?.home_probable_pitcher ?? apiPitchers?.home ?? null,
+            };
+          });
 
           return (
             <Card
@@ -300,35 +310,27 @@ export default function PicksPage() {
                   </div>
                 </div>
 
-                {/* Probable pitchers per game */}
-                {games.length > 0 && (
-                  <div className="border-t border-slate-800 pt-2.5 space-y-1.5">
-                    {games.map((g) => (
-                      <div key={g.id} className="text-xs">
-                        <span className="text-slate-500 mr-2">
-                          {formatGameDate(g.game_date)}
+                {/* Probable pitchers — one row per game (Fri / Sat / Sun) */}
+                <div className="border-t border-slate-800 pt-2.5 space-y-1.5">
+                  {gameSlots.map((slot) => (
+                    <div key={slot.date} className="text-xs flex items-center gap-2">
+                      <span className="text-slate-500 w-20 shrink-0">
+                        {formatGameDate(slot.date)}
+                      </span>
+                      {slot.awayPitcher && slot.homePitcher ? (
+                        <span className="text-slate-400 flex items-center gap-1 min-w-0">
+                          <User className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{slot.awayPitcher.split(" ").pop()}</span>
+                          <span className="text-slate-600 shrink-0">vs</span>
+                          <User className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{slot.homePitcher.split(" ").pop()}</span>
                         </span>
-                        {g.away_probable_pitcher && g.home_probable_pitcher ? (
-                          <span className="text-slate-400">
-                            <span className="inline-flex items-center gap-0.5">
-                              <User className="w-2.5 h-2.5 inline" />
-                              {g.away_probable_pitcher
-                                .split(" ")
-                                .pop()}{" "}
-                            </span>
-                            <span className="text-slate-600">vs</span>
-                            <span className="inline-flex items-center gap-0.5 ml-1">
-                              <User className="w-2.5 h-2.5 inline" />
-                              {g.home_probable_pitcher.split(" ").pop()}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="text-slate-600 italic">TBD</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ) : (
+                        <span className="text-slate-600 italic">TBD</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
 
                 {/* Pick buttons — shown when not submitted/locked */}
                 {!submitted && !isLocked && (

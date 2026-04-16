@@ -33,21 +33,34 @@ export async function getPicksData(poolId: string) {
     .eq("user_id", user.id)
     .single();
 
-  // Fetch live probable pitcher data from MLB Stats API.
-  // This fills in gaps when: (a) games were seeded before the pitcher columns
-  // were added, or (b) pitchers weren't announced yet at seeding time.
+  // Fetch live probable pitcher data from MLB Stats API for the full Fri–Sun weekend.
+  // Always cover 3 days so Saturday/Sunday pitchers show even if only Friday games
+  // are stored in mlb_games (which happens when the schedule was seeded early).
   const allGames = (seriesList ?? []).flatMap(
     (s: { mlb_series: { mlb_games: { mlb_game_pk: number; game_date: string }[] } }) =>
       s.mlb_series?.mlb_games ?? []
   );
-  const gameDates = [...new Set(allGames.map((g) => g.game_date))].sort();
-  const pitcherMap: Record<number, { away: string | null; home: string | null }> = {};
+  const rawDates = [...new Set(allGames.map((g) => g.game_date))].sort();
 
-  if (gameDates.length > 0) {
+  // Extend to full 3-day weekend starting from the earliest game date (Friday)
+  let weekendDates: string[] = rawDates;
+  if (rawDates.length > 0) {
+    const friday = new Date(rawDates[0] + "T12:00:00Z");
+    weekendDates = [0, 1, 2].map((offset) => {
+      const d = new Date(friday);
+      d.setUTCDate(d.getUTCDate() + offset);
+      return d.toISOString().split("T")[0];
+    });
+  }
+
+  // Keyed by "YYYY-MM-DD|AWAY|HOME" so we can look up without knowing the gamePk
+  const pitcherMap: Record<string, { away: string | null; home: string | null }> = {};
+
+  if (weekendDates.length > 0) {
     try {
       const url =
         `https://statsapi.mlb.com/api/v1/schedule` +
-        `?sportId=1&startDate=${gameDates[0]}&endDate=${gameDates[gameDates.length - 1]}` +
+        `?sportId=1&startDate=${weekendDates[0]}&endDate=${weekendDates[weekendDates.length - 1]}` +
         `&hydrate=probablePitcher(person)&language=en`;
       const resp = await fetch(url, {
         headers: { "User-Agent": "SeriesSpreadPool/1.0" },
@@ -57,7 +70,10 @@ export async function getPicksData(poolId: string) {
         const data = await resp.json();
         for (const date of data.dates ?? []) {
           for (const game of date.games ?? []) {
-            pitcherMap[game.gamePk] = {
+            const awayAbbr = game.teams?.away?.team?.abbreviation;
+            const homeAbbr = game.teams?.home?.team?.abbreviation;
+            if (!awayAbbr || !homeAbbr) continue;
+            pitcherMap[`${date.date}|${awayAbbr}|${homeAbbr}`] = {
               away: game.teams?.away?.probablePitcher?.fullName ?? null,
               home: game.teams?.home?.probablePitcher?.fullName ?? null,
             };
