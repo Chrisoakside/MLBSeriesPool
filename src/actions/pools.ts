@@ -45,6 +45,30 @@ export async function joinPool(code: string) {
   return { poolId: data };
 }
 
+/** Join a public pool directly by its UUID (no code required). */
+export async function joinPoolById(poolId: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated" };
+
+  // Fetch the join code for this public pool
+  const { data: pool, error: fetchErr } = await supabase
+    .from("pools")
+    .select("join_code, is_private")
+    .eq("id", poolId)
+    .single();
+
+  if (fetchErr || !pool) return { error: "Pool not found" };
+  if (pool.is_private) return { error: "This pool is private — ask the admin for a code" };
+
+  const { data, error } = await supabase.rpc("join_pool", {
+    p_join_code: pool.join_code,
+  });
+
+  if (error) return { error: error.message };
+  return { poolId: data as string };
+}
+
 export async function getMyPools() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -127,6 +151,59 @@ export async function getMyPools() {
   );
 
   return pools.filter(Boolean);
+}
+
+export async function getPublicPools() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  // Fetch all active public pools
+  const { data: pools } = await supabase
+    .from("pools")
+    .select("id, name, entry_fee, created_at")
+    .eq("is_private", false)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (!pools || pools.length === 0) return [];
+
+  // Which pools is the user already in?
+  const { data: myMemberships } = await supabase
+    .from("pool_members")
+    .select("pool_id")
+    .eq("user_id", user.id);
+  const myPoolIds = new Set(myMemberships?.map((m) => m.pool_id) ?? []);
+
+  // Enrich each pool with member count and current jackpot
+  const enriched = await Promise.all(
+    pools.map(async (pool) => {
+      const { count: memberCount } = await supabase
+        .from("pool_members")
+        .select("*", { count: "exact", head: true })
+        .eq("pool_id", pool.id)
+        .eq("is_approved", true);
+
+      const { data: ledger } = await supabase
+        .from("jackpot_ledger")
+        .select("running_balance")
+        .eq("pool_id", pool.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      return {
+        id: pool.id,
+        name: pool.name,
+        entryFee: pool.entry_fee as number,
+        memberCount: memberCount ?? 0,
+        jackpot: (ledger?.running_balance as number) ?? 0,
+        isMember: myPoolIds.has(pool.id),
+      };
+    })
+  );
+
+  return enriched;
 }
 
 export async function getPoolDashboard(poolId: string) {

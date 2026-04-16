@@ -18,6 +18,7 @@ import {
   Diamond,
   LogOut,
   ChevronDown,
+  Search,
 } from "lucide-react";
 
 const memberNav = [
@@ -108,6 +109,24 @@ export function Sidebar({
             </Link>
           );
         })}
+
+        {/* Global — visible regardless of active pool */}
+        <div className="pt-4 pb-2 px-3">
+          <span className="text-[10px] uppercase tracking-widest text-slate-600 font-medium">
+            Discover
+          </span>
+        </div>
+        <Link
+          href="/browse"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+            pathname === "/browse"
+              ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500"
+              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+          }`}
+        >
+          <Search className="w-4.5 h-4.5 flex-shrink-0" />
+          <span>Find a Pool</span>
+        </Link>
 
         {/* Admin Section */}
         {isAdmin && (
