@@ -180,7 +180,7 @@ export default function BrowsePoolsPage() {
                       {/* Action button */}
                       <Button
                         size="sm"
-                        variant={pool.isMember ? "secondary" : "default"}
+                        variant={pool.isMember ? "secondary" : "primary"}
                         onClick={() => handleJoinPublic(pool)}
                         disabled={joiningId === pool.id}
                         className="shrink-0"
