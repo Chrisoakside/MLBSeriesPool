@@ -80,7 +80,7 @@ export default async function AuthenticatedLayout({
       </main>
 
       {/* Mobile Bottom Nav */}
-      <BottomNav poolId={poolId ?? "demo"} />
+      <BottomNav poolId={poolId ?? "demo"} isAdmin={isAdmin} />
     </div>
   );
 }

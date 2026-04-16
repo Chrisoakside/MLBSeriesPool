@@ -30,6 +30,8 @@ export interface MlbGameScore {
   isDoubleheader: boolean;
   spread: number | null;
   favorite: "home" | "away" | null;
+  awayProbablePitcher: string | null;
+  homeProbablePitcher: string | null;
 }
 
 function mapStatus(abstractState: string, detailedState: string): MlbGameScore["status"] {
@@ -116,7 +118,7 @@ export async function fetchGamesForDates(dates: string[]): Promise<MlbGameScore[
     `?sportId=1` +
     `&startDate=${startDate}` +
     `&endDate=${endDate}` +
-    `&hydrate=team,linescore` +
+    `&hydrate=team,linescore,probablePitcher(person)` +
     `&language=en`;
 
   const resp = await fetch(url, {
@@ -175,6 +177,8 @@ export async function fetchGamesForDates(dates: string[]): Promise<MlbGameScore[
         isDoubleheader,
         spread: odds.spread,
         favorite: odds.favorite,
+        awayProbablePitcher: t.away.probablePitcher?.fullName ?? null,
+        homeProbablePitcher: t.home.probablePitcher?.fullName ?? null,
       });
     }
   }

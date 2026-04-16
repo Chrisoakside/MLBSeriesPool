@@ -110,6 +110,8 @@ export async function seedMlbSchedule(fridayDate: string) {
             is_doubleheader: game.isDoubleheader,
             inning: game.inning,
             inning_state: game.inningState,
+            away_probable_pitcher: game.awayProbablePitcher,
+            home_probable_pitcher: game.homeProbablePitcher,
           },
           { onConflict: "mlb_game_pk", ignoreDuplicates: false }
         );

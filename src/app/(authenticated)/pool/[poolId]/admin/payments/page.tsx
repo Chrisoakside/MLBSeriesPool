@@ -2,9 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Bell, Check, X } from "lucide-react";
+import { Check } from "lucide-react";
 import {
   getPaymentsData,
   togglePayment as togglePaymentAction,
@@ -205,16 +203,19 @@ export default function AdminPaymentsPage() {
                             <button
                               onClick={() => handleToggle(member.user_id, w.id)}
                               disabled={toggling === key}
-                              className="transition-transform active:scale-90"
+                              title={isPaid ? "Mark unpaid" : "Mark paid"}
+                              className={`mx-auto w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                                toggling === key
+                                  ? "opacity-40"
+                                  : "cursor-pointer active:scale-90"
+                              } ${
+                                isPaid
+                                  ? "bg-emerald-500 border-emerald-500 hover:bg-emerald-600 hover:border-emerald-600"
+                                  : "border-slate-600 hover:border-emerald-500 bg-transparent"
+                              }`}
                             >
-                              {isPaid ? (
-                                <Badge variant="winning">
-                                  <Check className="w-3 h-3" />
-                                </Badge>
-                              ) : (
-                                <Badge variant="losing">
-                                  <X className="w-3 h-3" />
-                                </Badge>
+                              {isPaid && (
+                                <Check className="w-3 h-3 text-white" strokeWidth={3} />
                               )}
                             </button>
                           </td>

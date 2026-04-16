@@ -19,10 +19,10 @@ export async function getPicksData(poolId: string) {
 
   if (!week) return null;
 
-  // Get series for this week with MLB data
+  // Get series for this week with MLB data including games + probable pitchers
   const { data: seriesList } = await supabase
     .from("series")
-    .select("*, mlb_series(*)")
+    .select("*, mlb_series(*, mlb_games(id, game_date, game_time, away_probable_pitcher, home_probable_pitcher))")
     .eq("week_id", week.id);
 
   // Get user's existing ticket
