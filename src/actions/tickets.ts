@@ -61,7 +61,7 @@ export async function getPicksData(poolId: string) {
       const url =
         `https://statsapi.mlb.com/api/v1/schedule` +
         `?sportId=1&startDate=${weekendDates[0]}&endDate=${weekendDates[weekendDates.length - 1]}` +
-        `&hydrate=probablePitcher(person)&language=en`;
+        `&hydrate=team,probablePitcher(person)&language=en`;
       const resp = await fetch(url, {
         headers: { "User-Agent": "SeriesSpreadPool/1.0" },
         signal: AbortSignal.timeout(8_000),
