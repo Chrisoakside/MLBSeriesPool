@@ -211,13 +211,15 @@ export default function CreatePoolPage() {
             </div>
             <button
               onClick={() => setIsPrivate(!isPrivate)}
-              className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-                isPrivate ? "bg-emerald-500" : "bg-slate-700"
+              role="switch"
+              aria-checked={isPrivate}
+              className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
+                isPrivate ? "bg-emerald-500" : "bg-slate-600"
               }`}
             >
               <span
-                className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
-                  isPrivate ? "translate-x-5.5" : "translate-x-0.5"
+                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                  isPrivate ? "translate-x-5" : "translate-x-0"
                 }`}
               />
             </button>
