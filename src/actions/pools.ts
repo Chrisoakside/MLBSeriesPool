@@ -206,6 +206,19 @@ export async function getPublicPools() {
   return enriched;
 }
 
+/** Lightweight context fetch used by the sidebar to show jackpot for the active pool. */
+export async function getActivePoolContext(poolId: string) {
+  const supabase = await createClient();
+  const { data: ledger } = await supabase
+    .from("jackpot_ledger")
+    .select("running_balance")
+    .eq("pool_id", poolId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+  return { jackpot: (ledger?.running_balance as number) ?? 0 };
+}
+
 export async function getPoolDashboard(poolId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

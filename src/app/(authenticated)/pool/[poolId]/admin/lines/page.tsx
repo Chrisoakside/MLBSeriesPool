@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ToggleLeft,
   ToggleRight,
+  Clock,
 } from "lucide-react";
 import {
   getAdminLinesData,
@@ -23,6 +24,12 @@ import {
   seedMlbSchedule,
 } from "@/actions/admin";
 import { useParams } from "next/navigation";
+
+interface MlbGame {
+  id: string;
+  game_date: string;
+  game_time: string | null;
+}
 
 interface MlbSeries {
   id: string;
@@ -35,6 +42,7 @@ interface MlbSeries {
   series_end_date: string;
   dk_spread: number | null;
   dk_favorite: "home" | "away" | null;
+  mlb_games?: MlbGame[];
 }
 
 interface ExistingSeries {
@@ -53,31 +61,80 @@ interface LineEntry {
   favorite: "home" | "away";
   games: number;
   startDate: string;
+  firstGameTime: string | null;
   isSet: boolean;
-  selected: boolean; // whether admin has toggled it into the week
-  hasDkSpread?: boolean; // spread came from DraftKings
+  selected: boolean;
+  hasDkSpread?: boolean;
 }
 
-/**
- * Snap to a valid half-point spread (1.5, 2.5, 3.5…).
- * DK sometimes returns whole numbers — this prevents the DB constraint
- * "valid_half_point_spread" from being violated.
- */
 function toValidHalfPoint(n: number): number {
-  const rounded = Math.round(n * 2) / 2; // nearest 0.5
+  const rounded = Math.round(n * 2) / 2;
   const safe = Math.max(0.5, rounded);
-  return safe % 1 === 0 ? safe + 0.5 : safe; // whole → next .5
+  return safe % 1 === 0 ? safe + 0.5 : safe;
 }
 
-/** Next upcoming Friday (or today if today is Friday) */
 function getNextFriday(): string {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun … 6=Sat
+  const day = now.getDay();
   const diff = day === 5 ? 0 : (5 - day + 7) % 7;
   const friday = new Date(now);
   friday.setDate(now.getDate() + diff);
   return friday.toISOString().split("T")[0];
 }
+
+/** Format an ISO game_time string as a readable local time, e.g. "7:05 PM" */
+function formatGameTime(isoStr: string | null): string {
+  if (!isoStr) return "";
+  try {
+    return new Date(isoStr).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZoneName: "short",
+    });
+  } catch {
+    return isoStr;
+  }
+}
+
+/** Get the first game time for a series from its mlb_games array */
+function getFirstGameTime(series: MlbSeries): string | null {
+  const games = series.mlb_games ?? [];
+  if (games.length === 0) return null;
+  const sorted = [...games].sort((a, b) => {
+    const at = a.game_time ?? a.game_date;
+    const bt = b.game_time ?? b.game_date;
+    return at.localeCompare(bt);
+  });
+  return sorted[0].game_time ?? null;
+}
+
+/** Return the upcoming Fri/Sat/Sun date strings for quick-pick buttons */
+function getUpcomingWeekendDates(): { label: string; value: string }[] {
+  const friday = getNextFriday();
+  const fri = new Date(friday + "T12:00:00Z");
+  return [0, 1, 2].map((offset) => {
+    const d = new Date(fri);
+    d.setUTCDate(d.getUTCDate() + offset);
+    const dateStr = d.toISOString().split("T")[0];
+    const label = d.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+    return { label, value: dateStr };
+  });
+}
+
+const COMMON_TIMES = [
+  { label: "6:05 PM", value: "18:05" },
+  { label: "7:05 PM", value: "19:05" },
+  { label: "7:10 PM", value: "19:10" },
+  { label: "7:35 PM", value: "19:35" },
+  { label: "8:05 PM", value: "20:05" },
+  { label: "8:10 PM", value: "20:10" },
+];
 
 export default function AdminLinesPage() {
   const params = useParams();
@@ -101,105 +158,68 @@ export default function AdminLinesPage() {
   const [fetchResult, setFetchResult] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // Week creation form
+  // Week creation form — split date + time for better UX
   const [weekLabel, setWeekLabel] = useState("");
-  const [lockTime, setLockTime] = useState("");
+  const [lockDate, setLockDate] = useState("");
+  const [lockTimeStr, setLockTimeStr] = useState("19:05");
 
   // Schedule fetch form
   const [fridayDate, setFridayDate] = useState(getNextFriday);
 
+  const weekendDates = getUpcomingWeekendDates();
+
+  // Combined lock datetime (local timezone)
+  const lockDateTime = lockDate && lockTimeStr ? `${lockDate}T${lockTimeStr}` : "";
+
   const loadData = useCallback(async () => {
     const data = await getAdminLinesData(poolId);
-    if (!data) {
-      setLoading(false);
-      return;
-    }
+    if (!data) { setLoading(false); return; }
 
     const mlb = data.mlbSeries as MlbSeries[];
     setAllMlbSeries(mlb);
     setNextWeekNumber(data.nextWeekNumber ?? 1);
 
+    const toEntry = (m: MlbSeries, overrides?: Partial<LineEntry>): LineEntry => ({
+      mlb_series_id: m.id,
+      away: m.away_team_abbr,
+      home: m.home_team_abbr,
+      spread: toValidHalfPoint(m.dk_spread ?? 1.5),
+      favorite: m.dk_favorite ?? "home",
+      games: m.total_games_scheduled,
+      startDate: m.series_start_date,
+      firstGameTime: getFirstGameTime(m),
+      isSet: false,
+      selected: false,
+      hasDkSpread: m.dk_spread !== null,
+      ...overrides,
+    });
+
     if (data.week) {
       setWeek(data.week);
-      setPublished(
-        data.week.status === "lines_set" || data.week.status === "locked"
-      );
+      setPublished(data.week.status === "lines_set" || data.week.status === "locked");
 
       if (data.series.length > 0) {
-        // Existing saved lines
-        const selectedIds = new Set(
-          (data.series as ExistingSeries[]).map((s) => s.mlb_series_id)
+        const selectedIds = new Set((data.series as ExistingSeries[]).map((s) => s.mlb_series_id));
+        const existingLines = (data.series as ExistingSeries[]).map((s) =>
+          toEntry(s.mlb_series, { spread: s.spread, favorite: s.favorite, isSet: true, selected: true })
         );
-        const existingLines = (data.series as ExistingSeries[]).map((s) => ({
-          mlb_series_id: s.mlb_series_id,
-          away: s.mlb_series.away_team_abbr,
-          home: s.mlb_series.home_team_abbr,
-          spread: s.spread,
-          favorite: s.favorite,
-          games: s.mlb_series.total_games_scheduled,
-          startDate: s.mlb_series.series_start_date,
-          isSet: true,
-          selected: true,
-        }));
-        // Append any mlb series not yet selected (so admin can add more)
         const extras = mlb
           .filter((m) => !selectedIds.has(m.id))
-          .map((m) => ({
-            mlb_series_id: m.id,
-            away: m.away_team_abbr,
-            home: m.home_team_abbr,
-            spread: toValidHalfPoint(m.dk_spread ?? 1.5),
-            favorite: m.dk_favorite ?? ("home" as const),
-            games: m.total_games_scheduled,
-            startDate: m.series_start_date,
-            isSet: false,
-            selected: false,
-            hasDkSpread: m.dk_spread !== null,
-          }));
+          .map((m) => toEntry(m));
         setLines([...existingLines, ...extras]);
       } else {
-        // No lines saved yet — show all available mlb series with DK spreads
-        setLines(
-          mlb.map((m) => ({
-            mlb_series_id: m.id,
-            away: m.away_team_abbr,
-            home: m.home_team_abbr,
-            spread: toValidHalfPoint(m.dk_spread ?? 1.5),
-            favorite: m.dk_favorite ?? ("home" as const),
-            games: m.total_games_scheduled,
-            startDate: m.series_start_date,
-            isSet: false,
-            selected: false,
-            hasDkSpread: m.dk_spread !== null,
-          }))
-        );
+        setLines(mlb.map((m) => toEntry(m)));
       }
     } else {
-      // No week yet — just populate lines list from mlb series
-      setLines(
-        mlb.map((m) => ({
-          mlb_series_id: m.id,
-          away: m.away_team_abbr,
-          home: m.home_team_abbr,
-          spread: toValidHalfPoint(m.dk_spread ?? 1.5),
-          favorite: m.dk_favorite ?? ("home" as const),
-          games: m.total_games_scheduled,
-          startDate: m.series_start_date,
-          isSet: false,
-          selected: false,
-          hasDkSpread: m.dk_spread !== null,
-        }))
-      );
+      setLines(mlb.map((m) => toEntry(m)));
     }
 
     setLoading(false);
   }, [poolId]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  // ── Schedule fetch ────────────────────────────────────────────
+  // ── Schedule fetch ──────────────────────────────────────────
   const handleFetchSchedule = async () => {
     setFetching(true);
     setFetchResult(null);
@@ -211,7 +231,11 @@ export default function AdminLinesPage() {
       setFetchResult(
         result.seriesCount === 0
           ? "No games found — the MLB schedule may not be posted yet for that weekend."
-          : `Loaded ${result.seriesCount} series (${result.gameCount} games) from ESPN.${"spreadsAvailable" in result && result.spreadsAvailable ? ` DraftKings spreads pre-filled for ${result.spreadsAvailable} games.` : " Spreads not yet posted — set them manually."}`
+          : `Loaded ${result.seriesCount} series (${result.gameCount} games).${
+              "spreadsAvailable" in result && result.spreadsAvailable
+                ? ` DraftKings spreads pre-filled for ${result.spreadsAvailable} games.`
+                : " Spreads not yet posted — set them manually."
+            }`
       );
       await loadData();
     }
@@ -220,20 +244,16 @@ export default function AdminLinesPage() {
 
   // ── Week creation ─────────────────────────────────────────────
   const handleCreateWeek = async () => {
-    if (!weekLabel.trim() || !lockTime) return;
+    if (!weekLabel.trim() || !lockDateTime) return;
     setCreatingWeek(true);
     setError("");
     const result = await createWeek(
       poolId,
       nextWeekNumber,
       weekLabel.trim(),
-      new Date(lockTime).toISOString()
+      new Date(lockDateTime).toISOString()
     );
-    if (result.error) {
-      setError(result.error);
-      setCreatingWeek(false);
-      return;
-    }
+    if (result.error) { setError(result.error); setCreatingWeek(false); return; }
     await loadData();
     setCreatingWeek(false);
   };
@@ -243,10 +263,8 @@ export default function AdminLinesPage() {
     setLines((prev) =>
       prev.map((l) => {
         if (l.mlb_series_id !== mlbId) return l;
-        // Spread must always be a half-point (e.g. 1.5, 2.5 …)
         const raw = Math.round((l.spread + delta) * 2) / 2;
-        const newSpread = Math.max(0.5, raw);
-        return { ...l, spread: newSpread, isSet: true };
+        return { ...l, spread: Math.max(0.5, raw), isSet: true };
       })
     );
   };
@@ -255,11 +273,7 @@ export default function AdminLinesPage() {
     setLines((prev) =>
       prev.map((l) =>
         l.mlb_series_id === mlbId
-          ? {
-              ...l,
-              favorite: l.favorite === "home" ? "away" : "home",
-              isSet: true,
-            }
+          ? { ...l, favorite: l.favorite === "home" ? "away" : "home", isSet: true }
           : l
       )
     );
@@ -275,9 +289,21 @@ export default function AdminLinesPage() {
     );
   };
 
+  /** Select or deselect all series in a date group */
+  const toggleSelectAll = (date: string) => {
+    const group = lines.filter((l) => l.startDate === date);
+    const allSelected = group.every((l) => l.selected);
+    setLines((prev) =>
+      prev.map((l) =>
+        l.startDate === date
+          ? { ...l, selected: !allSelected, isSet: !allSelected }
+          : l
+      )
+    );
+  };
+
   // ── Save / Publish ────────────────────────────────────────────
   const selectedLines = lines.filter((l) => l.selected);
-
   const buildEntries = () =>
     selectedLines.map((l) => ({
       mlb_series_id: l.mlb_series_id,
@@ -299,17 +325,9 @@ export default function AdminLinesPage() {
     setPublishing(true);
     setError("");
     const saveResult = await upsertSeries(week.id, buildEntries());
-    if (saveResult.error) {
-      setError(saveResult.error);
-      setPublishing(false);
-      return;
-    }
+    if (saveResult.error) { setError(saveResult.error); setPublishing(false); return; }
     const pubResult = await publishLines(week.id);
-    if (pubResult.error) {
-      setError(pubResult.error);
-      setPublishing(false);
-      return;
-    }
+    if (pubResult.error) { setError(pubResult.error); setPublishing(false); return; }
     setPublished(true);
     setPublishing(false);
   };
@@ -382,9 +400,8 @@ export default function AdminLinesPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-slate-400">
-            Pull the weekend&apos;s games directly from ESPN with DraftKings spread data. Select the
-            Friday start date and click Fetch — all matchups will appear below
-            for you to set spreads on.
+            Pull the weekend&apos;s games from ESPN with DraftKings spread data.
+            Select the Friday start date and click Fetch.
           </p>
           <div className="flex gap-3 items-end">
             <div className="flex-1">
@@ -416,7 +433,7 @@ export default function AdminLinesPage() {
         </CardContent>
       </Card>
 
-      {/* ── Create Week Panel (only shown if no week yet) ──────── */}
+      {/* ── Create Week Panel ─────────────────────────────────── */}
       {!week && (
         <Card>
           <CardHeader>
@@ -425,31 +442,92 @@ export default function AdminLinesPage() {
               Create Week {nextWeekNumber}
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-5">
             <Input
               label="Week Label"
               placeholder="e.g. Week 1 — Apr 18–20"
               value={weekLabel}
               onChange={(e) => setWeekLabel(e.target.value)}
             />
+
+            {/* Lock Date */}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                Picks Lock Time
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                <Clock className="w-3.5 h-3.5 inline mr-1.5 text-emerald-400" />
+                Lock Date
               </label>
+              {/* Quick-pick buttons for upcoming Fri/Sat/Sun */}
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {weekendDates.map((d) => (
+                  <button
+                    key={d.value}
+                    onClick={() => setLockDate(d.value)}
+                    className={`py-2 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      lockDate === d.value
+                        ? "bg-emerald-500/15 border-emerald-500 text-emerald-400"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
               <input
-                type="datetime-local"
-                value={lockTime}
-                onChange={(e) => setLockTime(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50"
+                type="date"
+                value={lockDate}
+                onChange={(e) => setLockDate(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50"
               />
-              <p className="text-xs text-slate-500 mt-1">
-                Typically Friday&apos;s first pitch time
-              </p>
             </div>
+
+            {/* Lock Time */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Lock Time
+              </label>
+              {/* Common first-pitch presets */}
+              <div className="flex flex-wrap gap-2 mb-2">
+                {COMMON_TIMES.map((t) => (
+                  <button
+                    key={t.value}
+                    onClick={() => setLockTimeStr(t.value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+                      lockTimeStr === t.value
+                        ? "bg-emerald-500/15 border-emerald-500 text-emerald-400"
+                        : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="time"
+                value={lockTimeStr}
+                onChange={(e) => setLockTimeStr(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50"
+              />
+              {lockDate && lockTimeStr && (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Picks lock:{" "}
+                  <span className="text-slate-400">
+                    {new Date(`${lockDate}T${lockTimeStr}`).toLocaleString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                      hour12: true,
+                    })}
+                  </span>
+                </p>
+              )}
+            </div>
+
             <Button
               className="w-full"
               onClick={handleCreateWeek}
-              disabled={!weekLabel.trim() || !lockTime || creatingWeek}
+              disabled={!weekLabel.trim() || !lockDateTime || creatingWeek}
             >
               {creatingWeek ? "Creating..." : `Create Week ${nextWeekNumber}`}
             </Button>
@@ -474,119 +552,151 @@ export default function AdminLinesPage() {
           {/* Group by weekend start date */}
           {Object.entries(
             lines.reduce<Record<string, LineEntry[]>>((acc, line) => {
-              const key = line.startDate;
-              (acc[key] ??= []).push(line);
+              (acc[line.startDate] ??= []).push(line);
               return acc;
             }, {})
           )
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, group]) => (
-              <div key={date} className="space-y-2">
-                <p className="text-xs text-slate-500 font-medium px-1">
-                  {new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                  })}{" "}
-                  weekend
-                </p>
-                {group.map((line, i) => (
-                  <Card
-                    key={line.mlb_series_id}
-                    className={line.selected ? "border-emerald-500/40" : ""}
-                  >
-                    <CardContent>
-                      <div className="flex items-center gap-3">
-                        {/* Select toggle */}
-                        {!published && (
-                          <button
-                            onClick={() => toggleSelected(line.mlb_series_id)}
-                            className="flex-shrink-0 text-slate-400 hover:text-emerald-400 transition-colors"
-                            title={line.selected ? "Remove from week" : "Add to week"}
-                          >
-                            {line.selected ? (
-                              <ToggleRight className="w-5 h-5 text-emerald-400" />
-                            ) : (
-                              <ToggleLeft className="w-5 h-5" />
-                            )}
-                          </button>
-                        )}
-                        {published && (
-                          <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
-                            line.selected
-                              ? "bg-emerald-500/15 text-emerald-400"
-                              : "bg-slate-700/50 text-slate-500"
-                          }`}>
-                            {line.selected ? (
-                              <Check className="w-3 h-3" />
-                            ) : (
-                              <span className="text-xs">{i + 1}</span>
-                            )}
-                          </div>
-                        )}
+            .map(([date, group]) => {
+              const allSelected = group.every((l) => l.selected);
+              const someSelected = group.some((l) => l.selected);
 
-                        {/* Teams */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`text-sm font-bold ${line.favorite === "away" ? "text-emerald-400" : "text-white"}`}>
-                              {line.away}
-                            </span>
-                            <span className="text-xs text-slate-500">@</span>
-                            <span className={`text-sm font-bold ${line.favorite === "home" ? "text-emerald-400" : "text-white"}`}>
-                              {line.home}
-                            </span>
-                            {!published && line.selected && (
-                              <button
-                                onClick={() => toggleFavorite(line.mlb_series_id)}
-                                className="text-[10px] text-slate-500 hover:text-emerald-400 transition-colors ml-1 border border-slate-700 rounded px-1"
-                              >
-                                flip fav
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
-                            {line.games}-game series ·{" "}
-                            <span className="text-slate-400 font-mono">
-                              {line.favorite === "home" ? line.home : line.away} -{line.spread.toFixed(1)}
-                            </span>
-                            {line.hasDkSpread && (
-                              <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded px-1 py-0.5">
-                                DK
-                              </span>
-                            )}
-                          </p>
-                        </div>
+              return (
+                <div key={date} className="space-y-2">
+                  {/* Date group header + Select All */}
+                  <div className="flex items-center justify-between px-1">
+                    <p className="text-xs text-slate-500 font-medium">
+                      {new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })}{" "}
+                      weekend
+                    </p>
+                    {!published && (
+                      <button
+                        onClick={() => toggleSelectAll(date)}
+                        className={`text-xs font-medium transition-colors cursor-pointer ${
+                          allSelected
+                            ? "text-emerald-400 hover:text-emerald-300"
+                            : someSelected
+                            ? "text-slate-400 hover:text-white"
+                            : "text-slate-500 hover:text-slate-300"
+                        }`}
+                      >
+                        {allSelected ? "Deselect All" : "Select All"}
+                      </button>
+                    )}
+                  </div>
 
-                        {/* Spread controls */}
-                        {line.selected && !published ? (
-                          <div className="flex items-center gap-1.5">
+                  {group.map((line, i) => (
+                    <Card
+                      key={line.mlb_series_id}
+                      className={line.selected ? "border-emerald-500/40" : ""}
+                    >
+                      <CardContent>
+                        <div className="flex items-center gap-3">
+                          {/* Select toggle */}
+                          {!published && (
                             <button
-                              onClick={() => adjustSpread(line.mlb_series_id, -0.5)}
-                              className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
+                              onClick={() => toggleSelected(line.mlb_series_id)}
+                              className="flex-shrink-0 text-slate-400 hover:text-emerald-400 transition-colors"
+                              title={line.selected ? "Remove from week" : "Add to week"}
                             >
-                              <Minus className="w-3 h-3" />
+                              {line.selected ? (
+                                <ToggleRight className="w-5 h-5 text-emerald-400" />
+                              ) : (
+                                <ToggleLeft className="w-5 h-5" />
+                              )}
                             </button>
-                            <span className="text-base font-bold font-mono text-white w-10 text-center">
+                          )}
+                          {published && (
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+                              line.selected
+                                ? "bg-emerald-500/15 text-emerald-400"
+                                : "bg-slate-700/50 text-slate-500"
+                            }`}>
+                              {line.selected ? (
+                                <Check className="w-3 h-3" />
+                              ) : (
+                                <span className="text-xs">{i + 1}</span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Teams + first game time */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-sm font-bold ${line.favorite === "away" ? "text-emerald-400" : "text-white"}`}>
+                                {line.away}
+                              </span>
+                              <span className="text-xs text-slate-500">@</span>
+                              <span className={`text-sm font-bold ${line.favorite === "home" ? "text-emerald-400" : "text-white"}`}>
+                                {line.home}
+                              </span>
+                              {!published && line.selected && (
+                                <button
+                                  onClick={() => toggleFavorite(line.mlb_series_id)}
+                                  className="text-[10px] text-slate-500 hover:text-emerald-400 transition-colors ml-1 border border-slate-700 rounded px-1"
+                                >
+                                  flip fav
+                                </button>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                              <span>{line.games}-game series</span>
+                              <span>·</span>
+                              <span className="text-slate-400 font-mono">
+                                {line.favorite === "home" ? line.home : line.away} -{line.spread.toFixed(1)}
+                              </span>
+                              {line.hasDkSpread && (
+                                <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded px-1 py-0.5">
+                                  DK
+                                </span>
+                              )}
+                              {line.firstGameTime && (
+                                <>
+                                  <span>·</span>
+                                  <span className="flex items-center gap-0.5 text-slate-500">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    {formatGameTime(line.firstGameTime)}
+                                  </span>
+                                </>
+                              )}
+                            </p>
+                          </div>
+
+                          {/* Spread controls */}
+                          {line.selected && !published ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => adjustSpread(line.mlb_series_id, -0.5)}
+                                className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <span className="text-base font-bold font-mono text-white w-10 text-center">
+                                {line.spread.toFixed(1)}
+                              </span>
+                              <button
+                                onClick={() => adjustSpread(line.mlb_series_id, 0.5)}
+                                className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : line.selected ? (
+                            <span className="text-base font-bold font-mono text-white">
                               {line.spread.toFixed(1)}
                             </span>
-                            <button
-                              onClick={() => adjustSpread(line.mlb_series_id, 0.5)}
-                              className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ) : line.selected ? (
-                          <span className="text-base font-bold font-mono text-white">
-                            {line.spread.toFixed(1)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ))}
+                          ) : null}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              );
+            })}
         </div>
       )}
 

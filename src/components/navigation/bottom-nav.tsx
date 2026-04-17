@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   LayoutDashboard,
@@ -18,11 +18,12 @@ import {
   Vault,
   Cog,
   Search,
+  ChevronRight,
 } from "lucide-react";
+import type { PoolEntry } from "@/app/(authenticated)/layout";
 
 interface BottomNavProps {
-  poolId?: string;
-  isAdmin?: boolean;
+  pools: PoolEntry[];
 }
 
 const memberItems = [
@@ -42,10 +43,16 @@ const adminItems = [
   { label: "Pool Settings", icon: Cog, href: "admin/settings" },
 ];
 
-export function BottomNav({ poolId, isAdmin = false }: BottomNavProps) {
+export function BottomNav({ pools }: BottomNavProps) {
   const pathname = usePathname();
-  const basePath = poolId ? `/pool/${poolId}` : "";
+  const router = useRouter();
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Derive the active pool from the current URL
+  const activePoolId = pathname.match(/^\/pool\/([^/]+)/)?.[1] ?? null;
+  const activePool = pools.find((p) => p.id === activePoolId) ?? null;
+  const isAdmin = activePool?.role === "admin";
+  const basePath = activePoolId ? `/pool/${activePoolId}` : "";
 
   const tabs = [
     { label: "Home", icon: LayoutDashboard, href: `${basePath}/dashboard` },
@@ -65,11 +72,9 @@ export function BottomNav({ poolId, isAdmin = false }: BottomNavProps) {
             return (
               <Link
                 key={tab.label}
-                href={poolId ? tab.href : "/dashboard"}
+                href={activePoolId ? tab.href : "/browse"}
                 className={`flex flex-col items-center justify-center gap-1 px-3 py-1 transition-colors ${
-                  isActive
-                    ? "text-emerald-400"
-                    : "text-slate-500 hover:text-slate-300"
+                  isActive ? "text-emerald-400" : "text-slate-500 hover:text-slate-300"
                 }`}
               >
                 <tab.icon className="w-5 h-5" />
@@ -115,9 +120,36 @@ export function BottomNav({ poolId, isAdmin = false }: BottomNavProps) {
             </div>
 
             <div className="px-4 pb-4 space-y-1 max-h-[70vh] overflow-y-auto">
+              {/* Pool switcher — only shown when in multiple pools */}
+              {pools.length > 1 && (
+                <div className="mb-3">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-600 font-medium px-4 pt-1 pb-2">
+                    Switch Pool
+                  </p>
+                  {pools.map((pool) => (
+                    <button
+                      key={pool.id}
+                      onClick={() => {
+                        setSheetOpen(false);
+                        router.push(`/pool/${pool.id}/dashboard`);
+                      }}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm transition-colors cursor-pointer ${
+                        pool.id === activePoolId
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                      }`}
+                    >
+                      <span>{pool.name}</span>
+                      <ChevronRight className="w-4 h-4 opacity-50" />
+                    </button>
+                  ))}
+                  <div className="border-t border-slate-800 my-2" />
+                </div>
+              )}
+
               {/* Member nav items */}
               {memberItems.map((item) => {
-                const href = poolId ? `${basePath}/${item.href}` : "/dashboard";
+                const href = activePoolId ? `${basePath}/${item.href}` : "/browse";
                 const isActive =
                   pathname === href || pathname.startsWith(href + "/");
                 return (
@@ -160,9 +192,9 @@ export function BottomNav({ poolId, isAdmin = false }: BottomNavProps) {
                     </span>
                   </div>
                   {adminItems.map((item) => {
-                    const href = poolId
+                    const href = activePoolId
                       ? `${basePath}/${item.href}`
-                      : "/dashboard";
+                      : "/browse";
                     const isActive =
                       pathname === href || pathname.startsWith(href + "/");
                     return (

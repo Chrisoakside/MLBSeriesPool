@@ -4,6 +4,12 @@ import { Sidebar } from "@/components/navigation/sidebar";
 import { BottomNav } from "@/components/navigation/bottom-nav";
 import { TopBar } from "@/components/navigation/top-bar";
 
+export type PoolEntry = {
+  id: string;
+  name: string;
+  role: "admin" | "member";
+};
+
 export default async function AuthenticatedLayout({
   children,
 }: {
@@ -25,52 +31,30 @@ export default async function AuthenticatedLayout({
     .eq("id", user.id)
     .single();
 
-  // Fetch user's pool memberships
+  // Fetch ALL pool memberships — the sidebar uses the URL to determine which is active
   const { data: memberships } = await supabase
     .from("pool_members")
-    .select("pool_id, role, pools(id, name, entry_fee)")
+    .select("pool_id, role, pools(id, name)")
     .eq("user_id", user.id)
     .eq("is_approved", true);
 
   const userName = profile?.display_name ?? user.email ?? "User";
 
-  // Determine active pool context (first pool for now)
-  const firstMembership = memberships?.[0];
-  const pool = firstMembership?.pools as unknown as { id: string; name: string } | null;
-  const poolId = pool?.id;
-  const poolName = pool?.name ?? "Select Pool";
-  const isAdmin = firstMembership?.role === "admin";
-
-  // Get jackpot for active pool
-  let jackpot = 0;
-  if (poolId) {
-    const { data: ledger } = await supabase
-      .from("jackpot_ledger")
-      .select("running_balance")
-      .eq("pool_id", poolId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
-    jackpot = ledger?.running_balance ?? 0;
-  }
+  const allPools: PoolEntry[] = (memberships ?? [])
+    .map((m) => {
+      const pool = m.pools as { id: string; name: string } | null;
+      if (!pool) return null;
+      return { id: pool.id, name: pool.name, role: m.role as "admin" | "member" };
+    })
+    .filter(Boolean) as PoolEntry[];
 
   return (
     <div className="min-h-screen bg-slate-950">
       {/* Desktop Sidebar */}
-      <Sidebar
-        poolId={poolId}
-        poolName={poolName}
-        jackpot={jackpot}
-        isAdmin={isAdmin}
-        userName={userName}
-      />
+      <Sidebar pools={allPools} userName={userName} />
 
       {/* Mobile Top Bar */}
-      <TopBar
-        poolName={poolName}
-        jackpot={jackpot}
-        userName={userName}
-      />
+      <TopBar pools={allPools} userName={userName} />
 
       {/* Main Content */}
       <main className="lg:ml-64 pt-14 lg:pt-0 pb-20 lg:pb-0">
@@ -80,7 +64,7 @@ export default async function AuthenticatedLayout({
       </main>
 
       {/* Mobile Bottom Nav */}
-      <BottomNav poolId={poolId ?? "demo"} isAdmin={isAdmin} />
+      <BottomNav pools={allPools} />
     </div>
   );
 }

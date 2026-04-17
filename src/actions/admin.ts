@@ -199,10 +199,10 @@ export async function getAdminLinesData(poolId: string) {
     .limit(1)
     .single();
 
-  // Available MLB series — show upcoming/current weekend first
+  // Available MLB series — include first game time for admin display
   const { data: mlbSeries } = await supabase
     .from("mlb_series")
-    .select("*")
+    .select("*, mlb_games(id, game_date, game_time)")
     .order("series_start_date", { ascending: true })
     .limit(60);
 

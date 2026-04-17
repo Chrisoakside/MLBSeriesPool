@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { signOut } from "@/actions/auth";
+import { getActivePoolContext } from "@/actions/pools";
 import {
   LayoutDashboard,
   ListChecks,
@@ -19,7 +21,9 @@ import {
   LogOut,
   ChevronDown,
   Search,
+  Check,
 } from "lucide-react";
+import type { PoolEntry } from "@/app/(authenticated)/layout";
 
 const memberNav = [
   { label: "Dashboard", icon: LayoutDashboard, href: "dashboard" },
@@ -39,22 +43,47 @@ const adminNav = [
 ];
 
 interface SidebarProps {
-  poolId?: string;
-  poolName?: string;
-  jackpot?: number;
-  isAdmin?: boolean;
+  pools: PoolEntry[];
   userName?: string;
 }
 
-export function Sidebar({
-  poolId,
-  poolName = "Select Pool",
-  jackpot = 0,
-  isAdmin = false,
-  userName = "User",
-}: SidebarProps) {
+export function Sidebar({ pools, userName = "User" }: SidebarProps) {
   const pathname = usePathname();
-  const basePath = poolId ? `/pool/${poolId}` : "";
+  const router = useRouter();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [jackpot, setJackpot] = useState(0);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Extract the active poolId from the current URL path (/pool/<id>/...)
+  const activePoolId = pathname.match(/^\/pool\/([^/]+)/)?.[1] ?? null;
+  const activePool = pools.find((p) => p.id === activePoolId) ?? null;
+  const isAdmin = activePool?.role === "admin";
+  const basePath = activePoolId ? `/pool/${activePoolId}` : "";
+
+  // Fetch jackpot whenever the active pool changes
+  useEffect(() => {
+    if (!activePoolId) { setJackpot(0); return; }
+    getActivePoolContext(activePoolId).then((ctx) => setJackpot(ctx.jackpot));
+  }, [activePoolId]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleOutsideClick(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  // Close dropdown on navigation
+  useEffect(() => { setDropdownOpen(false); }, [pathname]);
+
+  function switchPool(poolId: string) {
+    setDropdownOpen(false);
+    router.push(`/pool/${poolId}/dashboard`);
+  }
 
   return (
     <aside className="hidden lg:flex flex-col w-64 h-screen bg-slate-950 border-r border-slate-800 fixed left-0 top-0 z-40">
@@ -67,17 +96,65 @@ export function Sidebar({
       </div>
 
       {/* Pool Switcher */}
-      <div className="px-3 py-3">
-        <button className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer">
+      <div className="px-3 py-3 relative" ref={dropdownRef}>
+        <button
+          onClick={() => setDropdownOpen((o) => !o)}
+          className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors cursor-pointer"
+        >
           <span className="text-sm font-medium text-white truncate">
-            {poolName}
+            {activePool?.name ?? "Select Pool"}
           </span>
-          <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
+          <ChevronDown
+            className={`w-4 h-4 text-slate-500 flex-shrink-0 transition-transform ${dropdownOpen ? "rotate-180" : ""}`}
+          />
         </button>
+
+        {/* Dropdown */}
+        {dropdownOpen && (
+          <div className="absolute top-full left-3 right-3 z-50 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-xl overflow-hidden">
+            {pools.length === 0 ? (
+              <p className="text-xs text-slate-500 px-3 py-3 text-center">No pools yet</p>
+            ) : (
+              <div className="py-1">
+                {pools.map((pool) => (
+                  <button
+                    key={pool.id}
+                    onClick={() => switchPool(pool.id)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    <span className={pool.id === activePoolId ? "text-emerald-400 font-medium" : "text-white"}>
+                      {pool.name}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {pool.role === "admin" && (
+                        <span className="text-[9px] font-bold text-slate-500 bg-slate-800 rounded px-1">
+                          ADMIN
+                        </span>
+                      )}
+                      {pool.id === activePoolId && (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-slate-800 px-3 py-2">
+              <Link
+                href="/browse"
+                onClick={() => setDropdownOpen(false)}
+                className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors py-1"
+              >
+                <Search className="w-3 h-3" />
+                Find another pool
+              </Link>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Jackpot Display */}
-      {poolId && (
+      {activePoolId && (
         <div className="mx-3 mb-3 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
           <p className="text-[10px] uppercase tracking-widest text-emerald-400/70">
             Jackpot
@@ -93,14 +170,13 @@ export function Sidebar({
         {memberNav.map((item) => {
           const href = `${basePath}/${item.href}`;
           const isActive = pathname === href || pathname.startsWith(href + "/");
-
           return (
             <Link
               key={item.href}
-              href={poolId ? href : "/dashboard"}
+              href={activePoolId ? href : "/browse"}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                 isActive
-                  ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500 ml-0"
+                  ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500"
                   : "text-slate-400 hover:text-white hover:bg-slate-800/50"
               }`}
             >
@@ -110,7 +186,7 @@ export function Sidebar({
           );
         })}
 
-        {/* Global — visible regardless of active pool */}
+        {/* Discover */}
         <div className="pt-4 pb-2 px-3">
           <span className="text-[10px] uppercase tracking-widest text-slate-600 font-medium">
             Discover
@@ -138,13 +214,11 @@ export function Sidebar({
             </div>
             {adminNav.map((item) => {
               const href = `${basePath}/${item.href}`;
-              const isActive =
-                pathname === href || pathname.startsWith(href + "/");
-
+              const isActive = pathname === href || pathname.startsWith(href + "/");
               return (
                 <Link
                   key={item.href}
-                  href={poolId ? href : "/dashboard"}
+                  href={activePoolId ? href : "/browse"}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                     isActive
                       ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500"
@@ -166,9 +240,7 @@ export function Sidebar({
           <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-300">
             {userName.charAt(0).toUpperCase()}
           </div>
-          <span className="text-sm text-slate-300 truncate flex-1">
-            {userName}
-          </span>
+          <span className="text-sm text-slate-300 truncate flex-1">{userName}</span>
           <button
             onClick={() => signOut()}
             className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
