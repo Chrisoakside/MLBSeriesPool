@@ -42,7 +42,7 @@ export default async function AuthenticatedLayout({
 
   const allPools: PoolEntry[] = (memberships ?? [])
     .map((m) => {
-      const pool = m.pools as { id: string; name: string } | null;
+      const pool = m.pools as unknown as { id: string; name: string } | null;
       if (!pool) return null;
       return { id: pool.id, name: pool.name, role: m.role as "admin" | "member" };
     })
