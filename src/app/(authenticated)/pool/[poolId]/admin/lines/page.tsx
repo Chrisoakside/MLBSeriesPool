@@ -109,11 +109,12 @@ function getFirstGameTime(series: MlbSeries): string | null {
   return sorted[0].game_time ?? null;
 }
 
-/** Return the upcoming Fri/Sat/Sun date strings for quick-pick buttons */
+/** Return Thu/Fri/Sat of the upcoming weekend as quick-pick buttons */
 function getUpcomingWeekendDates(): { label: string; value: string }[] {
   const friday = getNextFriday();
   const fri = new Date(friday + "T12:00:00Z");
-  return [0, 1, 2].map((offset) => {
+  // -1 = Thursday, 0 = Friday, 1 = Saturday
+  return [-1, 0, 1].map((offset) => {
     const d = new Date(fri);
     d.setUTCDate(d.getUTCDate() + offset);
     const dateStr = d.toISOString().split("T")[0];
@@ -128,12 +129,10 @@ function getUpcomingWeekendDates(): { label: string; value: string }[] {
 }
 
 const COMMON_TIMES = [
-  { label: "6:05 PM", value: "18:05" },
-  { label: "7:05 PM", value: "19:05" },
-  { label: "7:10 PM", value: "19:10" },
-  { label: "7:35 PM", value: "19:35" },
-  { label: "8:05 PM", value: "20:05" },
-  { label: "8:10 PM", value: "20:10" },
+  { label: "8:00 AM", value: "08:00" },
+  { label: "10:00 AM", value: "10:00" },
+  { label: "12:00 PM", value: "12:00" },
+  { label: "1:00 PM", value: "13:00" },
 ];
 
 export default function AdminLinesPage() {
@@ -670,7 +669,7 @@ export default function AdminLinesPage() {
                           {line.selected && !published ? (
                             <div className="flex items-center gap-1.5">
                               <button
-                                onClick={() => adjustSpread(line.mlb_series_id, -0.5)}
+                                onClick={() => adjustSpread(line.mlb_series_id, -1.0)}
                                 className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
                               >
                                 <Minus className="w-3 h-3" />
@@ -679,7 +678,7 @@ export default function AdminLinesPage() {
                                 {line.spread.toFixed(1)}
                               </span>
                               <button
-                                onClick={() => adjustSpread(line.mlb_series_id, 0.5)}
+                                onClick={() => adjustSpread(line.mlb_series_id, 1.0)}
                                 className="w-7 h-7 rounded-md bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-slate-300 transition-colors"
                               >
                                 <Plus className="w-3 h-3" />
