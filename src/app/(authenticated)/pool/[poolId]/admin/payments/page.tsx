@@ -33,6 +33,7 @@ export default function AdminPaymentsPage() {
 
   const [weeks, setWeeks] = useState<Week[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [emailMap, setEmailMap] = useState<Record<string, string>>({});
   const [payments, setPayments] = useState<Payment[]>([]);
   const [entryFee, setEntryFee] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -48,6 +49,7 @@ export default function AdminPaymentsPage() {
       }
       setWeeks(data.weeks);
       setMembers(data.members as unknown as Member[]);
+      setEmailMap(data.emailMap ?? {});
       setPayments(data.payments as unknown as Payment[]);
       setEntryFee(data.entryFee);
       setLoading(false);
@@ -203,9 +205,15 @@ export default function AdminPaymentsPage() {
                   const name =
                     (member.profiles as unknown as { display_name: string })
                       ?.display_name ?? "Unknown";
+                  const email = emailMap[member.user_id] ?? "";
                   return (
                     <tr key={member.user_id} className="hover:bg-slate-800/30">
-                      <td className="py-3 text-sm text-white">{name}</td>
+                      <td className="py-3">
+                        <p className="text-sm text-white">{name}</p>
+                        {email && (
+                          <p className="text-xs text-slate-500">{email}</p>
+                        )}
+                      </td>
                       {weeks.map((w) => {
                         const isPaid = getPaymentStatus(member.user_id, w.id);
                         const key = `${member.user_id}-${w.id}`;

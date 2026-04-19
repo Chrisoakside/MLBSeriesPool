@@ -29,6 +29,7 @@ export default function AdminSettingsPage() {
   const [entryFee, setEntryFee] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
+  const [emailMap, setEmailMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -48,6 +49,7 @@ export default function AdminSettingsPage() {
       setEntryFee(String(data.pool.entry_fee));
       setJoinCode(data.pool.join_code);
       setMembers(data.members as unknown as Member[]);
+      setEmailMap((data as unknown as { emailMap: Record<string, string> }).emailMap ?? {});
       setLoading(false);
     }
     load();
@@ -190,18 +192,22 @@ export default function AdminSettingsPage() {
               const name =
                 (member.profiles as unknown as { display_name: string })
                   ?.display_name ?? "Unknown";
+              const email = emailMap[member.user_id] ?? "";
               return (
                 <div
                   key={member.user_id}
                   className="flex items-center justify-between py-3"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-300">
+                    <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-slate-300 flex-shrink-0">
                       {name.charAt(0)}
                     </div>
                     <div>
                       <span className="text-sm text-white">{name}</span>
-                      <p className="text-xs text-slate-500">
+                      {email && (
+                        <p className="text-xs text-slate-500">{email}</p>
+                      )}
+                      <p className="text-xs text-slate-600">
                         Joined {formatDate(member.joined_at)}
                       </p>
                     </div>

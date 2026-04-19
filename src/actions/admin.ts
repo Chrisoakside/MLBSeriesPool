@@ -243,12 +243,20 @@ export async function getPaymentsData(poolId: string) {
 
   if (!weeks?.length) return null;
 
-  // Get all members
+  // Get all members with display names
   const { data: members } = await supabase
     .from("pool_members")
     .select("user_id, profiles(display_name)")
     .eq("pool_id", poolId)
     .eq("is_approved", true);
+
+  // Fetch member emails via service-role auth admin (auth.users not RLS-accessible)
+  const service = createServiceClient();
+  const { data: { users } } = await service.auth.admin.listUsers({ perPage: 1000 });
+  const memberIds = new Set((members ?? []).map((m) => m.user_id));
+  const emailMap: Record<string, string> = Object.fromEntries(
+    users.filter((u) => memberIds.has(u.id)).map((u) => [u.id, u.email ?? ""])
+  );
 
   // Get payments for recent weeks
   const weekIds = weeks.map((w) => w.id);
@@ -268,6 +276,7 @@ export async function getPaymentsData(poolId: string) {
   return {
     weeks: weeks ?? [],
     members: members ?? [],
+    emailMap,
     payments: payments ?? [],
     entryFee: pool?.entry_fee ?? 0,
   };
@@ -404,7 +413,15 @@ export async function getPoolSettings(poolId: string) {
     .eq("is_approved", true)
     .order("joined_at", { ascending: true });
 
-  return { pool, members: members ?? [] };
+  // Fetch member emails via service-role auth admin (auth.users not RLS-accessible)
+  const service = createServiceClient();
+  const { data: { users } } = await service.auth.admin.listUsers({ perPage: 1000 });
+  const memberIds = new Set((members ?? []).map((m) => m.user_id));
+  const emailMap: Record<string, string> = Object.fromEntries(
+    users.filter((u) => memberIds.has(u.id)).map((u) => [u.id, u.email ?? ""])
+  );
+
+  return { pool, members: members ?? [], emailMap };
 }
 
 export async function updatePoolSettings(
