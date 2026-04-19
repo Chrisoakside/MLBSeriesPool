@@ -1,7 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown } from "lucide-react";
+import { TeamLogo } from "@/components/ui/team-logo";
 import { getTicketData } from "@/actions/tickets";
 import Link from "next/link";
 
@@ -20,6 +20,20 @@ const statusBadgeVariant: Record<string, "winning" | "losing" | "pending"> = {
   won: "winning",
   lost: "losing",
 };
+
+/** Format an ISO game_time string as a short local start time, e.g. "7:05 PM" */
+function formatStartTime(isoStr: string | null | undefined): string {
+  if (!isoStr) return "Scheduled";
+  try {
+    return new Date(isoStr).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "Scheduled";
+  }
+}
 
 export default async function TicketPage({
   params,
@@ -117,6 +131,7 @@ export default async function TicketPage({
                 mlb_games: {
                   id: string;
                   game_date: string;
+                  game_time: string | null;
                   away_score: number;
                   home_score: number;
                   status: string;
@@ -168,21 +183,29 @@ export default async function TicketPage({
                 className={`border-l-4 ${borderColor[pickStatus] ?? "border-l-slate-600"}`}
               >
                 <CardContent>
-                  {/* Header row */}
+                  {/* Header row — team logos + matchup */}
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300">
+                      {/* Away team */}
+                      <div className="flex flex-col items-center gap-1">
+                        <TeamLogo abbr={mlb.away_team_abbr} size={36} />
+                        <span className="text-[10px] font-bold text-slate-400">
                           {mlb.away_team_abbr}
-                        </div>
-                        <span className="text-xs text-slate-500">@</span>
-                        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300">
-                          {mlb.home_team_abbr}
-                        </div>
+                        </span>
                       </div>
-                      <span className="text-sm text-white">
-                        {mlb.away_team_name} @ {mlb.home_team_name}
-                      </span>
+                      <span className="text-xs text-slate-600 font-medium">@</span>
+                      {/* Home team */}
+                      <div className="flex flex-col items-center gap-1">
+                        <TeamLogo abbr={mlb.home_team_abbr} size={36} />
+                        <span className="text-[10px] font-bold text-slate-400">
+                          {mlb.home_team_abbr}
+                        </span>
+                      </div>
+                      {/* Picked team highlight */}
+                      <div className="ml-2">
+                        <p className="text-xs text-slate-500">Your pick</p>
+                        <p className="text-sm font-bold text-white">{pickedTeam}</p>
+                      </div>
                     </div>
                     <Badge variant={statusBadgeVariant[pickStatus] ?? "pending"}>
                       {pick.result === "win"
@@ -243,6 +266,7 @@ export default async function TicketPage({
                       (
                         game: {
                           id: string;
+                          game_time: string | null;
                           away_score: number;
                           home_score: number;
                           status: string;
@@ -257,9 +281,7 @@ export default async function TicketPage({
                             ? "FINAL"
                             : game.status === "in_progress"
                               ? `${game.inning_state ?? ""} ${game.inning ?? ""}`.trim()
-                              : game.status === "scheduled"
-                                ? "Scheduled"
-                                : game.status;
+                              : formatStartTime(game.game_time);
 
                         return (
                           <div
@@ -271,15 +293,15 @@ export default async function TicketPage({
                             </span>
                             <div className="flex items-center gap-2">
                               <span className="font-mono w-16 text-right">
-                                {mlb.away_team_abbr} {game.away_score}
+                                {game.status === "scheduled" ? "—" : `${mlb.away_team_abbr} ${game.away_score}`}
                               </span>
                               <span className="text-slate-600">-</span>
                               <span className="font-mono w-16">
-                                {game.home_score} {mlb.home_team_abbr}
+                                {game.status === "scheduled" ? "—" : `${game.home_score} ${mlb.home_team_abbr}`}
                               </span>
                             </div>
                             <span
-                              className={`w-16 text-right ${isLive ? "text-blue-400" : ""}`}
+                              className={`w-20 text-right ${isLive ? "text-blue-400" : "text-slate-500"}`}
                             >
                               {isLive && (
                                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse-live mr-1" />

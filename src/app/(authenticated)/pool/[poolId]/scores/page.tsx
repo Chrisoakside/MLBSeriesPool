@@ -7,38 +7,26 @@ import { Diamond } from "lucide-react";
 import { getScoresData } from "@/actions/tickets";
 import { useParams } from "next/navigation";
 import { useLiveScores } from "@/hooks/use-live-scores";
+import { TeamLogo } from "@/components/ui/team-logo";
 
-const ESPN_SLUG_OVERRIDES: Record<string, string> = { AZ: "ari", CWS: "chw" };
-
-function TeamLogo({ abbr, size = 32 }: { abbr: string; size?: number }) {
-  const [errored, setErrored] = useState(false);
-  const slug = ESPN_SLUG_OVERRIDES[abbr] ?? abbr.toLowerCase();
-  if (errored) {
-    return (
-      <div
-        style={{ width: size, height: size }}
-        className="rounded-full bg-slate-700 flex items-center justify-center text-[9px] font-bold text-slate-300 flex-shrink-0"
-      >
-        {abbr.slice(0, 3)}
-      </div>
-    );
+/** Format an ISO game_time as a short local start time, e.g. "7:05 PM" */
+function formatStartTime(isoStr: string | null | undefined): string {
+  if (!isoStr) return "Scheduled";
+  try {
+    return new Date(isoStr).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "Scheduled";
   }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://a.espncdn.com/i/teamlogos/mlb/500/${slug}.png`}
-      alt={abbr}
-      width={size}
-      height={size}
-      onError={() => setErrored(true)}
-      className="object-contain flex-shrink-0"
-    />
-  );
 }
 
 interface MlbGame {
   id: string;
   game_date: string;
+  game_time: string | null;
   away_score: number;
   home_score: number;
   status: string;
@@ -188,9 +176,7 @@ export default function ScoresPage() {
                         ? "FINAL"
                         : game.status === "in_progress"
                           ? `${game.inning_state ?? ""} ${game.inning ?? ""}`.trim()
-                          : game.status === "scheduled"
-                            ? "Scheduled"
-                            : game.status;
+                          : formatStartTime(game.game_time);
 
                     return (
                       <div key={game.id} className="flex items-center justify-between text-xs">
